@@ -1,46 +1,56 @@
 'use client';
 
 import { useEffect, useId, useRef, useState } from 'react';
-import { api, isApiError, type ApiError } from '@/lib/api';
-import { formatMoney, fulfillmentBlockText, scheduleBlockText } from '@/lib/format';
+import { api, isApiError, isSafePaymentUrl, type ApiError } from '@/lib/api';
+import { blockText, formatMoney } from '@/lib/format';
 import { useRateLimitSeconds, type QuoteState } from '@/lib/hooks';
 import { cart, prefs, toPreviewProducts, type CartLine } from '@/lib/store';
-import type { PaymentOption, Quote, StoreSettings } from '@/lib/types';
+import type { PaymentOption, PaymentStart, PriceType, Quote, StoreSettings } from '@/lib/types';
 import { ArrowIcon, BackIcon, BagIcon, CloseIcon, Photo, Stepper } from './ui';
 
-const PAYMENT_LABELS: Record<PaymentOption, { title: string; detail: string }> = {
+const PAYMENT_LABELS: Record<string, { title: string; detail: string }> = {
   PAY_IN_STORE: { title: 'Pay at pickup', detail: 'Settle up at the counter when you collect.' },
   PAY_ONLINE: { title: 'Pay online now', detail: 'You will be taken to a secure payment page.' },
 };
 
 const DEDUCTIONS = new Set(['DISCOUNT', 'CREDIT', 'FREE_ITEM']);
+// How long an unanswered order keeps warning the customer before the cart is offered again.
+const UNCONFIRMED_WINDOW_MS = 30 * 60 * 1000;
 
 interface Props {
   lines: CartLine[];
   quoteState: QuoteState;
   settings: StoreSettings | null;
+  // Set when ordering cannot work at all (settings failed, or the store lists no way to pay).
+  unavailable: string | null;
   paymentOptions: PaymentOption[];
   paymentOption: PaymentOption | null;
   onPaymentOption: (option: PaymentOption) => void;
-  canOrder: boolean;
-  blockedReason: string | null;
+  unconfirmedAt: number | null;
   lang: string | null;
   contentLang: string;
   titleId: string;
   onClose?: () => void;
   onPlaced: (orderId: string) => void;
-  loadingShell: boolean;
+  onBusy: (busy: boolean) => void;
 }
-
-type Uncertain = { phone: string | null };
 
 function lineProblems(quote: Quote | null, lines: CartLine[]) {
   const problems = new Map<string, string>();
   if (!quote) return problems;
-  const bad = new Set((quote.orderProductStocks ?? []).filter((s) => !s.isAvailable || !s.isStockSufficient).map((s) => s.productId));
+  const stocks = new Map((quote.orderProductStocks ?? []).map((s) => [s.productId, s]));
   const priced = quote.orderProducts ?? [];
   lines.forEach((line, i) => {
-    if (bad.has(line.productId)) problems.set(line.key, 'No longer available. Please remove it.');
+    const stock = stocks.get(line.productId);
+    if (stock && !stock.isAvailable) problems.set(line.key, 'No longer available. Please remove it.');
+    else if (stock && !stock.isStockSufficient) {
+      problems.set(
+        line.key,
+        stock.availableStock != null && stock.availableStock > 0
+          ? `Only ${stock.availableStock} left. Please lower the quantity.`
+          : 'Not enough left. Please remove it.',
+      );
+    }
     const match = priced.length === lines.length && priced[i]?.productId === line.productId ? priced[i] : null;
     if (match?.modifiers?.some((m) => !m.isMatchLimit || m.items?.some((it) => !it.isAvailable))) {
       problems.set(line.key, 'One of its options changed. Please remove it and add it again.');
@@ -50,8 +60,8 @@ function lineProblems(quote: Quote | null, lines: CartLine[]) {
 }
 
 export default function CartPanel(props: Props) {
-  const { lines, quoteState, settings, paymentOptions, paymentOption, canOrder, blockedReason, lang, contentLang, titleId, onClose } = props;
-  const { quote, error: quoteError, loading: quoting } = quoteState;
+  const { lines, quoteState, settings, paymentOptions, paymentOption, lang, contentLang, titleId, onClose, onBusy } = props;
+  const { quote, current, error: quoteError, loading: quoting } = quoteState;
   const formId = useId();
   const [step, setStep] = useState<'cart' | 'checkout'>('cart');
   const [name, setName] = useState('');
@@ -61,27 +71,34 @@ export default function CartPanel(props: Props) {
   const [fieldErrors, setFieldErrors] = useState<{ name?: string; phone?: string }>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [placing, setPlacing] = useState(false);
-  const [uncertain, setUncertain] = useState<Uncertain | null>(null);
+  const placingRef = useRef(false);
   const limitedSeconds = useRateLimitSeconds();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
 
   const count = lines.reduce((n, l) => n + l.quantity, 0);
-  const showCash = paymentOption === 'PAY_IN_STORE' && !!quote && quote.cashTotal !== quote.cardTotal;
-  const useCash = settings?.defaultPriceType === 'CASH_PRICE';
+  // Paying online means paying by card, so the card price applies whatever the store's default is.
+  const priceType: PriceType = paymentOption === 'PAY_ONLINE' ? 'CARD_PRICE' : (settings?.defaultPriceType ?? 'CARD_PRICE');
+  const useCash = priceType === 'CASH_PRICE';
+  const showOther = paymentOption === 'PAY_IN_STORE' && !!quote && quote.cashTotal !== quote.cardTotal;
   const total = quote ? (useCash ? quote.cashTotal : quote.cardTotal) : null;
   const subTotal = quote ? (useCash ? quote.cashSubTotal : quote.cardSubTotal) : null;
-  const problems = lineProblems(quote, lines);
+  const problems = lineProblems(current ? quote : null, lines);
   const pricedLines = quote?.orderProducts?.length === lines.length ? quote.orderProducts : null;
+  const uncertain = props.unconfirmedAt !== null && Date.now() - props.unconfirmedAt < UNCONFIRMED_WINDOW_MS;
 
-  const quoteBlock = quote?.fulfillmentBlock
-    ? fulfillmentBlockText[quote.fulfillmentBlock]
-    : quote?.scheduleBlock
-      ? scheduleBlockText[quote.scheduleBlock]
-      : quote?.meetsMinOrderAmount === false
-        ? `The minimum order is ${formatMoney(quote.minOrderAmount ?? 0)}. Add a little more to continue.`
-        : null;
-  const blocked = !canOrder ? blockedReason : quoteBlock ?? (problems.size ? 'Some items need your attention before you can check out.' : null);
+  const quoteBlock = (q: Quote | null, forStep: 'cart' | 'checkout'): string | null => {
+    if (!q) return null;
+    if (q.fulfillmentBlock) {
+      // A rejected payment option is settled on the checkout step, where the other options are offered.
+      if (q.fulfillmentBlock === 'PAYMENT_OPTION' && forStep === 'cart' && paymentOptions.length > 1) return null;
+      return blockText(q.fulfillmentBlock);
+    }
+    if (q.scheduleBlock) return blockText(q.scheduleBlock);
+    if (q.meetsMinOrderAmount === false) return `The minimum order is ${formatMoney(q.minOrderAmount ?? 0)}. Add a little more to continue.`;
+    return null;
+  };
+  const blocked = quoteBlock(current ? quote : null, step) ?? (problems.size ? 'Some items need your attention before you can check out.' : null);
 
   useEffect(() => {
     if (!lines.length) setStep('cart');
@@ -115,13 +132,19 @@ export default function CartPanel(props: Props) {
     }
     setFieldErrors(next);
     if (rest.length || (!next.name && !next.phone)) setFormError(rest.join(' ') || describe(e));
-    if (next.name) document.getElementById(`${formId}-name`)?.focus();
-    else if (next.phone) document.getElementById(`${formId}-phone`)?.focus();
+    else if (next.name) document.getElementById(`${formId}-name`)?.focus();
+    else document.getElementById(`${formId}-phone`)?.focus();
+  };
+
+  const setBusy = (busy: boolean) => {
+    placingRef.current = busy;
+    setPlacing(busy);
+    onBusy(busy);
   };
 
   const place = async (e: { preventDefault(): void }) => {
     e.preventDefault();
-    if (placing || !paymentOption || !settings) return;
+    if (placingRef.current || !paymentOption || !settings) return;
     const cleanName = name.trim();
     const digits = phone.replace(/[\s().-]/g, '');
     // A number typed without a country code is taken as a US number.
@@ -133,13 +156,16 @@ export default function CartPanel(props: Props) {
     }
     setFieldErrors(errors);
     setFormError(null);
-    setUncertain(null);
     if (errors.name || errors.phone) {
       document.getElementById(errors.name ? `${formId}-name` : `${formId}-phone`)?.focus();
       return;
     }
+    if (!navigator.onLine) {
+      setFormError('You are offline, so nothing was sent. Reconnect and try again.');
+      return;
+    }
 
-    setPlacing(true);
+    setBusy(true);
     try {
       // Quotes expire after five minutes, so price once more right before placing.
       const fresh = await api.preview(
@@ -153,14 +179,15 @@ export default function CartPanel(props: Props) {
         },
         lang,
       );
-      const freshProblems = lineProblems(fresh, lines);
-      if (fresh.fulfillmentBlock || fresh.scheduleBlock || fresh.meetsMinOrderAmount === false || freshProblems.size) {
+      const freshBlock = quoteBlock(fresh, 'checkout');
+      if (freshBlock || lineProblems(fresh, lines).size) {
         quoteState.adopt(fresh);
-        setStep('cart');
-        setFormError(null);
+        // A payment-option block is fixed on this step; anything else is fixed in the cart.
+        if (fresh.fulfillmentBlock === 'PAYMENT_OPTION' && paymentOptions.length > 1) setFormError(freshBlock);
+        else goto('cart');
         return;
       }
-      if (quote && (fresh.cardTotal !== quote.cardTotal || fresh.cashTotal !== quote.cashTotal)) {
+      if (quote && current && (fresh.cardTotal !== quote.cardTotal || fresh.cashTotal !== quote.cashTotal)) {
         quoteState.adopt(fresh);
         setFormError('The total has changed since you last looked. Please check the new amount, then place your order.');
         return;
@@ -169,36 +196,38 @@ export default function CartPanel(props: Props) {
       let created;
       try {
         created = await api.placeOrder(
-          { previewOrderId: fresh.previewOrderId, priceType: settings.defaultPriceType, pickupName: cleanName, pickupPhone: cleanPhone, agreeToSmsUpdates: sms },
+          { previewOrderId: fresh.previewOrderId, priceType, pickupName: cleanName, pickupPhone: cleanPhone, agreeToSmsUpdates: sms },
           lang,
         );
       } catch (err) {
-        // A lost response, or a quote reported missing, cannot tell us whether an order was created.
-        if (isApiError(err) && (err.kind === 'network' || err.code === 'PREVIEW_ORDER_NOT_FOUND')) {
-          setUncertain({ phone: settings.storePhoneNumber });
+        // No clear answer, or a quote reported missing right after it was issued: an order may or may not exist.
+        if (isApiError(err) && (err.kind === 'unconfirmed' || err.code === 'PREVIEW_ORDER_NOT_FOUND')) {
+          prefs.setUnconfirmed(Date.now());
           return;
         }
         throw err;
       }
 
+      prefs.setUnconfirmed(null);
       prefs.rememberOrder({ orderId: created.orderId, serial: created.orderSerialNumber });
-      cart.clear();
-      setStep('cart');
 
+      let payment: PaymentStart | null = null;
       if (paymentOption === 'PAY_ONLINE') {
         const back = `${window.location.origin}${window.location.pathname}?order=${created.orderId}`;
         try {
-          const payment = await api.startPayment(created.orderId, `${back}&payment=success`, `${back}&payment=failed`, lang);
-          if (payment.paymentLinkUrl) {
-            prefs.rememberOrder({ orderId: created.orderId, serial: created.orderSerialNumber, transactionId: payment.transactionId });
-            window.location.assign(payment.paymentLinkUrl);
-            return;
-          }
+          payment = await api.startPayment(created.orderId, `${back}&payment=success`, `${back}&payment=failed`, lang);
         } catch {
-          // The order exists; its page offers to try the payment again.
+          // The order exists; its page offers to start the payment again.
         }
       }
+
+      cart.clear();
+      // Show the order page first, so Back from the payment page lands on the order rather than an empty cart.
       props.onPlaced(created.orderId);
+      if (payment && isSafePaymentUrl(payment.paymentLinkUrl)) {
+        prefs.rememberOrder({ orderId: created.orderId, serial: created.orderSerialNumber, transactionId: payment.transactionId });
+        window.location.assign(payment.paymentLinkUrl);
+      }
     } catch (err) {
       if (isApiError(err)) {
         if (err.validationErrors.length) applyValidation(err);
@@ -207,38 +236,78 @@ export default function CartPanel(props: Props) {
         setFormError('Something unexpected happened. Please try again.');
       }
     } finally {
-      setPlacing(false);
+      setBusy(false);
     }
   };
 
+  const closeButton = onClose ? (
+    <button type="button" className="icon-btn cart__close" onClick={onClose} aria-label="Close" lang="en">
+      <CloseIcon />
+    </button>
+  ) : null;
+
   const header = (
     <header className="cart__head">
-      {step === 'checkout' ? (
-        <button type="button" className="icon-btn" onClick={() => goto('cart')} aria-label="Back to your cart">
+      {step === 'checkout' && !uncertain ? (
+        <button type="button" className="icon-btn" onClick={() => goto('cart')} aria-label="Back to your cart" disabled={placing}>
           <BackIcon />
         </button>
       ) : null}
       <h2 id={titleId} ref={headingRef} tabIndex={-1}>
-        {step === 'cart' ? 'Your cart' : 'Pickup details'}
+        {step === 'cart' || uncertain ? 'Your cart' : 'Pickup details'}
       </h2>
-      {step === 'cart' && count ? <span className="cart__count">{count} {count === 1 ? 'item' : 'items'}</span> : null}
-      {onClose ? (
-        <button type="button" className="icon-btn cart__close" onClick={onClose} aria-label="Close">
-          <CloseIcon />
-        </button>
+      {step === 'cart' && count && !uncertain ? (
+        <span className="cart__count">
+          {count} {count === 1 ? 'item' : 'items'}
+        </span>
       ) : null}
+      {closeButton}
     </header>
   );
 
-  if (props.loadingShell) {
+  if (props.unavailable) {
     return (
-      <section className="cart" aria-busy="true" aria-label="Your cart">
-        <header className="cart__head">
-          <h2 id={titleId}>Your cart</h2>
-        </header>
+      <section className="cart cart--empty" aria-labelledby={titleId}>
+        {header}
+        <div className="cart__empty" role="status">
+          <p className="cart__empty-title">Ordering is unavailable</p>
+          <p>{props.unavailable}</p>
+        </div>
+      </section>
+    );
+  }
+
+  if (!settings) {
+    return (
+      <section className="cart" aria-busy="true" aria-labelledby={titleId}>
+        {header}
         <div className="cart__skeleton">
           <span className="skel skel--line" style={{ width: '70%' }} />
           <span className="skel skel--line" style={{ width: '45%' }} />
+        </div>
+      </section>
+    );
+  }
+
+  if (uncertain) {
+    return (
+      <section className="cart" aria-labelledby={titleId}>
+        {header}
+        <div className="cart__uncertain" ref={errorRef} tabIndex={-1} role="alert">
+          <p className="eyebrow">Not confirmed</p>
+          <h3>We can’t tell whether your order went through.</h3>
+          <p>
+            We sent it to the kitchen but did not get a clear answer back, so it may or may not have arrived. Please check with us before ordering again, so you
+            don’t end up with two.
+          </p>
+          {settings.storePhoneNumber ? (
+            <a className="btn btn--primary" href={`tel:${settings.storePhoneNumber}`}>
+              Call {settings.storePhoneNumber}
+            </a>
+          ) : null}
+          <button type="button" className="btn btn--ghost" onClick={() => prefs.setUnconfirmed(null)}>
+            I’ve checked, back to my cart
+          </button>
         </div>
       </section>
     );
@@ -264,26 +333,33 @@ export default function CartPanel(props: Props) {
     );
   }
 
+  // Some stores report a discount both as an adjustment and in the discount details; list it once.
+  const adjustments = quote?.financialAdjustments ?? [];
+  const discounts = adjustments.some((a) => DEDUCTIONS.has(a.adjustType))
+    ? []
+    : (quote?.discountDetails?.orderDiscounts ?? []).concat(quote?.discountDetails?.productDiscounts ?? []);
+  const wait = quote?.estimatedWaitMinutes;
+
   const totals = (
-    <div className={`totals ${quoting ? 'is-updating' : ''}`} aria-live="polite" aria-busy={quoting}>
+    <div className={`totals ${quoting ? 'is-updating' : ''}`} aria-busy={quoting}>
       {quote ? (
         <dl>
           <div>
             <dt>Subtotal</dt>
             <dd>{formatMoney(subTotal ?? 0)}</dd>
           </div>
-          {(quote.discountDetails?.orderDiscounts ?? []).concat(quote.discountDetails?.productDiscounts ?? []).map((d, i) => (
+          {discounts.map((d, i) => (
             <div key={`d${i}`} className="totals__deduction">
               <dt dir="auto">{d.discountName ?? 'Discount'}</dt>
               <dd>−{formatMoney(Math.abs(useCash ? d.cashAmount : d.cardAmount))}</dd>
             </div>
           ))}
-          {(quote.financialAdjustments ?? []).map((a, i) => {
+          {adjustments.map((a, i) => {
             const amount = Math.abs(useCash ? a.cashSubTotal : a.cardSubTotal);
             const deduction = DEDUCTIONS.has(a.adjustType);
             return (
               <div key={`a${i}`} className={deduction ? 'totals__deduction' : ''}>
-                <dt dir="auto">{a.name ?? a.adjustType}</dt>
+                <dt dir="auto">{a.name ?? (deduction ? 'Discount' : 'Taxes and fees')}</dt>
                 <dd>
                   {deduction ? '−' : ''}
                   {formatMoney(amount)}
@@ -295,7 +371,7 @@ export default function CartPanel(props: Props) {
             <dt>Total</dt>
             <dd>{formatMoney(total ?? 0)}</dd>
           </div>
-          {showCash ? (
+          {showOther ? (
             <div className="totals__alt">
               <dt>{useCash ? 'If you pay by card' : 'If you pay in cash'}</dt>
               <dd>{formatMoney(useCash ? quote.cardTotal : quote.cashTotal)}</dd>
@@ -303,13 +379,13 @@ export default function CartPanel(props: Props) {
           ) : null}
         </dl>
       ) : quoteError ? (
-        <div className="inline-state" role="alert">
+        <div className="inline-state" role="status">
           <p>
             {quoteError.kind === 'rate_limited'
-              ? `Pricing will resume in ${limitedSeconds || 'a few'} seconds.`
+              ? 'Pricing will resume in a moment.'
               : quoteError.kind === 'network'
                 ? 'We could not price your cart. Check your connection.'
-                : quoteError.validationErrors[0]?.errorMessage ?? `We could not price this order${quoteError.code ? ` (${quoteError.code})` : ''}.`}
+                : (quoteError.validationErrors[0]?.errorMessage ?? `We could not price this cart${quoteError.code ? ` (${quoteError.code})` : ''}.`)}
           </p>
           {quoteError.kind !== 'rate_limited' ? (
             <button type="button" className="btn btn--ghost btn--sm" onClick={quoteState.refresh}>
@@ -318,47 +394,29 @@ export default function CartPanel(props: Props) {
           ) : null}
         </div>
       ) : (
-        <div className="totals__skeleton" aria-label="Pricing your cart">
+        <div className="totals__skeleton">
           <span className="skel skel--line" />
           <span className="skel skel--line skel--strong" />
         </div>
       )}
-      {quote?.estimatedWaitMinutes ? (
-        <p className="totals__wait">
-          Ready in about {quote.estimatedWaitMinutes.min}–{quote.estimatedWaitMinutes.max} minutes
-        </p>
-      ) : null}
+      {wait ? <p className="totals__wait">Ready in about {wait.min === wait.max ? wait.min : `${wait.min}–${wait.max}`} minutes</p> : null}
       {(quote?.warnings ?? []).map((w, i) => (
         <p key={i} className="notice notice--warn" dir="auto">
           {w}
         </p>
       ))}
+      {/* Announced once per settled price, not on every keystroke of a re-price. */}
+      <p className="sr-only" role="status">
+        {current && !quoting && total !== null ? `Cart total ${formatMoney(total)}` : ''}
+      </p>
     </div>
   );
 
-  if (uncertain) {
-    return (
-      <section className="cart" aria-labelledby={titleId}>
-        {header}
-        <div className="cart__uncertain" ref={errorRef} tabIndex={-1} role="alert">
-          <p className="eyebrow">We lost the line</p>
-          <h3>We can’t tell whether your order went through.</h3>
-          <p>
-            The connection dropped while the order was on its way to the kitchen, so it may or may not have arrived. Please check with us before
-            ordering again, so you are not charged for two.
-          </p>
-          {uncertain.phone ? (
-            <a className="btn btn--primary" href={`tel:${uncertain.phone}`}>
-              Call {uncertain.phone}
-            </a>
-          ) : null}
-          <button type="button" className="btn btn--ghost" onClick={() => setUncertain(null)}>
-            Back to my cart
-          </button>
-        </div>
-      </section>
-    );
-  }
+  const blockNotice = blocked ? (
+    <p className="notice notice--block" role="status">
+      {blocked}
+    </p>
+  ) : null;
 
   return (
     <section className={`cart cart--${step}`} aria-labelledby={titleId}>
@@ -394,7 +452,17 @@ export default function CartPanel(props: Props) {
                         </p>
                       ) : null}
                       <div className="line__row" lang="en">
-                        <Stepper size="sm" min={0} value={line.quantity} onChange={(q) => cart.setQuantity(line.key, q)} label={`Quantity of ${line.name}`} />
+                        <Stepper
+                          size="sm"
+                          min={0}
+                          value={line.quantity}
+                          onChange={(q) => {
+                            cart.setQuantity(line.key, q);
+                            // The row is about to disappear; keep focus inside the panel.
+                            if (q <= 0) headingRef.current?.focus();
+                          }}
+                          label={`Quantity of ${line.name}`}
+                        />
                         <span className="line__amount">{formatMoney(amount)}</span>
                       </div>
                     </div>
@@ -405,12 +473,13 @@ export default function CartPanel(props: Props) {
           </div>
           <footer className="cart__foot">
             {totals}
-            {blocked ? (
-              <p className="notice notice--block" role="status">
-                {blocked}
-              </p>
-            ) : null}
-            <button type="button" className="btn btn--primary btn--block" disabled={!quote || !!blocked || quoting} onClick={() => goto('checkout')}>
+            {blockNotice}
+            <button
+              type="button"
+              className="btn btn--primary btn--block"
+              disabled={!quote || !current || !!blocked || quoting}
+              onClick={() => goto('checkout')}
+            >
               <span>Continue to pickup details</span>
               <ArrowIcon width={18} height={18} />
             </button>
@@ -432,7 +501,10 @@ export default function CartPanel(props: Props) {
                 autoComplete="name"
                 value={name}
                 maxLength={60}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  if (fieldErrors.name) setFieldErrors((f) => ({ ...f, name: undefined }));
+                }}
                 aria-invalid={!!fieldErrors.name}
                 aria-describedby={fieldErrors.name ? `${formId}-name-err` : undefined}
                 required
@@ -452,7 +524,10 @@ export default function CartPanel(props: Props) {
                 autoComplete="tel"
                 value={phone}
                 maxLength={24}
-                onChange={(e) => setPhone(e.target.value)}
+                onChange={(e) => {
+                  setPhone(e.target.value);
+                  if (fieldErrors.phone) setFieldErrors((f) => ({ ...f, phone: undefined }));
+                }}
                 aria-invalid={!!fieldErrors.phone}
                 aria-describedby={`${formId}-phone-hint${fieldErrors.phone ? ` ${formId}-phone-err` : ''}`}
                 required
@@ -480,33 +555,37 @@ export default function CartPanel(props: Props) {
 
             <fieldset className="pay">
               <legend>Payment</legend>
-              {paymentOptions.map((option) => (
-                <label key={option} className={`pay__option ${paymentOption === option ? 'is-checked' : ''}`}>
-                  <input type="radio" name="payment" checked={paymentOption === option} onChange={() => props.onPaymentOption(option)} />
-                  <span className="pay__dot" aria-hidden="true" />
-                  <span>
-                    <span className="pay__title">{PAYMENT_LABELS[option].title}</span>
-                    <span className="pay__detail">{PAYMENT_LABELS[option].detail}</span>
-                  </span>
-                </label>
-              ))}
+              {paymentOptions.map((option) => {
+                const label = PAYMENT_LABELS[option] ?? { title: option.replace(/_/g, ' ').toLowerCase(), detail: '' };
+                return (
+                  <label key={option} className={`pay__option ${paymentOption === option ? 'is-checked' : ''}`}>
+                    <input type="radio" name="payment" checked={paymentOption === option} onChange={() => props.onPaymentOption(option)} disabled={placing} />
+                    <span className="pay__dot" aria-hidden="true" />
+                    <span>
+                      <span className="pay__title">{label.title}</span>
+                      <span className="pay__detail">{label.detail}</span>
+                    </span>
+                  </label>
+                );
+              })}
             </fieldset>
           </div>
           <footer className="cart__foot">
             {totals}
-            {blocked ? (
-              <p className="notice notice--block" role="status">
-                {blocked}
-              </p>
-            ) : null}
-            <button type="submit" className={`btn btn--primary btn--block ${placing ? 'is-busy' : ''}`} disabled={placing || !quote || !!blocked || limitedSeconds > 0} aria-busy={placing}>
+            {blockNotice}
+            <button
+              type="submit"
+              className={`btn btn--primary btn--block ${placing ? 'is-busy' : ''}`}
+              disabled={placing || !quote || !current || quoting || !!blocked || limitedSeconds > 0}
+              aria-busy={placing}
+            >
               {placing ? (
                 <span>Sending to the kitchen…</span>
               ) : limitedSeconds > 0 ? (
-                <span>Please wait {limitedSeconds}s</span>
+                <span>Please wait a moment</span>
               ) : (
                 <>
-                  <span>Place order</span>
+                  <span>{paymentOption === 'PAY_ONLINE' ? 'Place order and pay' : 'Place order'}</span>
                   <span className="btn__amount">{total !== null ? formatMoney(total) : ''}</span>
                 </>
               )}

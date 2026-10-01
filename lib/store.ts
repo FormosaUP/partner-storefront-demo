@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { isUuid } from './api';
 import type { PreviewRequest } from './types';
 
 export interface CartModifier {
@@ -31,13 +32,60 @@ interface Persisted {
   lang: string | null;
   menuId: string | null;
   recent: RecentOrder[];
+  // Set when an order was sent but no answer came back, so the warning survives a reload.
+  unconfirmedAt: number | null;
 }
 
 const KEY = 'storefront.v1';
-const empty: Persisted = { lines: [], lang: null, menuId: null, recent: [] };
+const MAX_QUANTITY = 99;
+const empty: Persisted = { lines: [], lang: null, menuId: null, recent: [], unconfirmedAt: null };
 
 let state: Persisted = empty;
 const listeners = new Set<() => void>();
+
+const isLine = (l: unknown): l is CartLine => {
+  const x = l as CartLine | null;
+  return (
+    !!x &&
+    typeof x.key === 'string' &&
+    isUuid(x.productId) &&
+    isUuid(x.storeMenuCategoryId) &&
+    typeof x.name === 'string' &&
+    typeof x.unitPrice === 'number' &&
+    Number.isInteger(x.quantity) &&
+    x.quantity > 0 &&
+    typeof x.note === 'string' &&
+    Array.isArray(x.modifiers) &&
+    x.modifiers.every((m) => m && isUuid(m.id) && Array.isArray(m.items) && m.items.every((i) => i && isUuid(i.itemId)))
+  );
+};
+
+// Storage is shared with every other page on this origin, so nothing read from it is trusted as-is.
+function parse(raw: string | null): Persisted {
+  if (!raw) return empty;
+  try {
+    const p = JSON.parse(raw) as Partial<Persisted> | null;
+    if (!p || typeof p !== 'object') return empty;
+    return {
+      lines: Array.isArray(p.lines) ? p.lines.filter(isLine) : [],
+      lang: typeof p.lang === 'string' && p.lang.length <= 12 ? p.lang : null,
+      menuId: isUuid(p.menuId) ? p.menuId : null,
+      recent: Array.isArray(p.recent)
+        ? p.recent
+            .filter((r) => r && isUuid(r.orderId))
+            .map((r) => ({
+              orderId: r.orderId,
+              serial: typeof r.serial === 'string' ? r.serial : null,
+              transactionId: isUuid(r.transactionId) ? r.transactionId : null,
+            }))
+            .slice(0, 5)
+        : [],
+      unconfirmedAt: typeof p.unconfirmedAt === 'number' ? p.unconfirmedAt : null,
+    };
+  } catch {
+    return empty;
+  }
+}
 
 function set(next: Partial<Persisted>) {
   state = { ...state, ...next };
@@ -57,13 +105,21 @@ function subscribe(fn: () => void) {
 }
 
 export function hydrateStore() {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) state = { ...empty, ...JSON.parse(raw) };
-  } catch {
-    state = empty;
-  }
-  listeners.forEach((fn) => fn());
+  const read = () => {
+    try {
+      state = parse(localStorage.getItem(KEY));
+    } catch {
+      state = empty;
+    }
+    listeners.forEach((fn) => fn());
+  };
+  read();
+  // Another tab changed the cart or placed an order: follow it rather than overwrite it later.
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === KEY || e.key === null) read();
+  };
+  window.addEventListener('storage', onStorage);
+  return () => window.removeEventListener('storage', onStorage);
 }
 
 export function useStore(): Persisted {
@@ -76,7 +132,13 @@ export function useStore(): Persisted {
 
 export function lineKey(productId: string, storeMenuCategoryId: string, modifiers: CartModifier[], note: string) {
   const mods = modifiers
-    .map((m) => `${m.id}:${m.items.map((i) => i.itemId).sort().join(',')}`)
+    .map(
+      (m) =>
+        `${m.id}:${m.items
+          .map((i) => i.itemId)
+          .sort()
+          .join(',')}`,
+    )
     .sort()
     .join('|');
   return `${productId}/${storeMenuCategoryId}/${mods}/${note.trim()}`;
@@ -87,7 +149,7 @@ export const cart = {
     const existing = state.lines.find((l) => l.key === line.key);
     set({
       lines: existing
-        ? state.lines.map((l) => (l.key === line.key ? { ...l, quantity: l.quantity + line.quantity } : l))
+        ? state.lines.map((l) => (l.key === line.key ? { ...l, quantity: Math.min(MAX_QUANTITY, l.quantity + line.quantity) } : l))
         : [...state.lines, line],
     });
   },
@@ -96,7 +158,7 @@ export const cart = {
       lines:
         quantity <= 0
           ? state.lines.filter((l) => l.key !== key)
-          : state.lines.map((l) => (l.key === key ? { ...l, quantity } : l)),
+          : state.lines.map((l) => (l.key === key ? { ...l, quantity: Math.min(MAX_QUANTITY, quantity) } : l)),
     });
   },
   clear() {
@@ -107,6 +169,7 @@ export const cart = {
 export const prefs = {
   setLang: (lang: string | null) => set({ lang }),
   setMenu: (menuId: string) => set({ menuId }),
+  setUnconfirmed: (at: number | null) => set({ unconfirmedAt: at }),
   rememberOrder(order: RecentOrder) {
     set({ recent: [order, ...state.recent.filter((r) => r.orderId !== order.orderId)].slice(0, 5) });
   },
@@ -118,8 +181,6 @@ export function toPreviewProducts(lines: CartLine[]): PreviewRequest['products']
     storeMenuCategoryId: l.storeMenuCategoryId,
     quantity: l.quantity,
     ...(l.note.trim() ? { note: l.note.trim() } : {}),
-    ...(l.modifiers.length
-      ? { modifiers: l.modifiers.map((m) => ({ id: m.id, items: m.items.map((i) => ({ itemId: i.itemId, quantity: 1 })) })) }
-      : {}),
+    ...(l.modifiers.length ? { modifiers: l.modifiers.map((m) => ({ id: m.id, items: m.items.map((i) => ({ itemId: i.itemId, quantity: 1 })) })) } : {}),
   }));
 }

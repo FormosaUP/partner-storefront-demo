@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { api, type ApiError } from '@/lib/api';
+import { api, isUuid, type ApiError } from '@/lib/api';
 import { formatMoney, pickPrice } from '@/lib/format';
 import { prefersReducedMotion, prefetchResource, useMedia, useOnline, useQuote, useRateLimitSeconds, useResource } from '@/lib/hooks';
 import { cart, hydrateStore, lineKey, prefs, useStore, type CartLine } from '@/lib/store';
@@ -14,8 +14,6 @@ import OrderView from './OrderView';
 import ProductSheet from './ProductSheet';
 import { ArrowIcon, BagIcon, ClockIcon, GlobeIcon, PhoneIcon, PinIcon, Sheet, flyToCart } from './ui';
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 type StoreState = { kind: 'open' | 'closed' | 'paused' | 'off'; label: string; reason: string | null };
 
 function storeState(s: StoreSettings): StoreState {
@@ -26,6 +24,8 @@ function storeState(s: StoreSettings): StoreState {
   if (!s.asapAvailable) return { kind: 'closed', label: 'Closed now', reason: 'We are closed right now. Have a look around, and order when we reopen.' };
   return { kind: 'open', label: 'Open now', reason: null };
 }
+
+const SETTINGS_MAX_AGE_MS = 2 * 60 * 1000;
 
 // Runs a state change inside a view transition where the browser supports it.
 function transition(change: () => void) {
@@ -62,6 +62,10 @@ export default function Storefront() {
   const [paymentChoice, setPaymentChoice] = useState<PaymentOption | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const [mounted, setMounted] = useState(2);
+  const [menuShown, setMenuShown] = useState(false);
+  const [placing, setPlacing] = useState(false);
+  const jumping = useRef(false);
+  const settingsAt = useRef(0);
   const isDesktop = useMedia('(min-width: 1100px)');
   // The banner is shown from tablet width up. Phones skip it: the only file on offer is 5760px wide.
   const isWide = useMedia('(min-width: 700px)');
@@ -72,26 +76,36 @@ export default function Storefront() {
   const lang = store.lang;
 
   useEffect(() => {
-    hydrateStore();
+    const stopSync = hydrateStore();
     const read = () => {
       const id = new URLSearchParams(window.location.search).get('order');
-      setOrderId(id && UUID.test(id) ? id : null);
+      setOrderId(isUuid(id) ? id : null);
+      setCartOpen(false);
+      setSheetOpen(false);
     };
     read();
     setReady(true);
     window.addEventListener('popstate', read);
-    return () => window.removeEventListener('popstate', read);
+    return () => {
+      stopSync();
+      window.removeEventListener('popstate', read);
+    };
   }, []);
 
-  const settings = useResource(ready ? `settings:${lang}` : null, (signal) => api.settings(lang, signal));
+  // The menu is fetched the first time it is shown and then kept, so returning from an order page costs nothing.
+  useEffect(() => {
+    if (ready && !orderId) setMenuShown(true);
+  }, [ready, orderId]);
+
+  const settings = useResource(ready ? 'settings' : null, (signal) => api.settings(signal));
   const languages = useResource(ready ? 'languages' : null, (signal) => api.languages(signal));
-  const menus = useResource(ready && !orderId ? `menus:${lang}` : null, (signal) => api.menus(lang, signal), true);
+  const menus = useResource(menuShown ? `menus:${lang}` : null, (signal) => api.menus(lang, signal), true);
 
   const menuList = useMemo(() => [...(menus.data?.menus ?? [])].sort((a, b) => a.displayOrder - b.displayOrder), [menus.data]);
   const activeMenu = menuList.find((m) => m.id === store.menuId) ?? menuList.find((m) => m.isAvailableNow) ?? menuList[0] ?? null;
   // A returning visitor's last menu starts loading alongside the menu list instead of after it.
   const menuId = activeMenu?.id ?? (!menus.data && !menus.error ? store.menuId : null);
-  const menu = useResource(ready && menuId && !orderId ? `menu:${menuId}:${lang}` : null, (signal) => api.menu(menuId!, lang, signal), true);
+  const menu = useResource(menuShown && menuId ? `menu:${menuId}:${lang}` : null, (signal) => api.menu(menuId!, lang, signal), true);
   const categories = useMemo(
     () => [...(menu.data?.categories ?? [])].filter((c) => c.products?.length).sort((a, b) => a.displayOrder - b.displayOrder),
     [menu.data],
@@ -103,13 +117,35 @@ export default function Storefront() {
   const paymentOptions = s?.onlinePaymentOptions ?? [];
   const paymentOption = paymentChoice && paymentOptions.includes(paymentChoice) ? paymentChoice : (paymentOptions[0] ?? null);
   const contentLang = lang ?? s?.defaultLanguageCode ?? 'en';
-  const quoteState = useQuote(store.lines, paymentOption, lang);
+  const quoteState = useQuote(orderId ? [] : store.lines, paymentOption, lang);
   const count = store.lines.reduce((n, l) => n + l.quantity, 0);
   const brand = s?.subdomain ?? '';
+  const fatal = !s && settings.error && settings.error.kind !== 'rate_limited' ? settings.error : null;
+  const menuError = menus.error ?? menu.error;
+  const menuLoading = !fatal && !menu.data && (!ready || menus.loading || menu.loading || (!menus.data && !menus.error));
 
   useEffect(() => {
     if (brand) document.title = `${brand} · Order online for pickup`;
   }, [brand]);
+
+  // Opening status can change while the page sits open, so settings are refreshed when the visitor comes back to it.
+  const reloadSettings = settings.reload;
+  useEffect(() => {
+    if (s) settingsAt.current = Date.now();
+  }, [s]);
+  useEffect(() => {
+    const onVisible = () => {
+      if (!document.hidden && settingsAt.current && Date.now() - settingsAt.current > SETTINGS_MAX_AGE_MS) reloadSettings();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [reloadSettings]);
+
+  // A remembered language the store no longer offers falls back to the store default.
+  const languageCodes = languages.data?.languages;
+  useEffect(() => {
+    if (lang && languageCodes && !languageCodes.some((l) => l.code === lang)) prefs.setLang(null);
+  }, [lang, languageCodes]);
 
   const inCart = useMemo(() => {
     const map = new Map<string, number>();
@@ -128,11 +164,11 @@ export default function Storefront() {
     const hasIdle = typeof window.requestIdleCallback === 'function';
     const idle = (fn: () => void): number => (hasIdle ? window.requestIdleCallback(fn, { timeout: 400 }) : (setTimeout(fn, 60) as unknown as number));
     const cancel = (id: number) => (hasIdle ? window.cancelIdleCallback(id) : clearTimeout(id));
+    let shown = 2;
     const step = () => {
-      setMounted((n) => {
-        if (n + 2 < categories.length) handle = idle(step);
-        return n + 2;
-      });
+      shown += 2;
+      setMounted(shown);
+      if (shown < categories.length) handle = idle(step);
     };
     handle = idle(step);
     return () => cancel(handle);
@@ -142,16 +178,24 @@ export default function Storefront() {
   useEffect(() => {
     if (!categories.length) return;
     if (!categories.some((c) => c.id === activeCategory.get())) activeCategory.set(categories[0].id);
+    // Track every section inside the band, not just the ones that changed, and pick the topmost.
+    const inBand = new Set<string>();
     const observer = new IntersectionObserver(
       (entries) => {
-        const visible = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
-        if (visible) activeCategory.set((visible.target as HTMLElement).dataset.category ?? null);
+        for (const e of entries) {
+          const id = (e.target as HTMLElement).dataset.category ?? '';
+          if (e.isIntersecting) inBand.add(id);
+          else inBand.delete(id);
+        }
+        if (jumping.current) return;
+        const top = categories.find((c) => inBand.has(c.id));
+        if (top) activeCategory.set(top.id);
       },
       { rootMargin: '-140px 0px -55% 0px' },
     );
     document.querySelectorAll('[data-category]').forEach((el) => observer.observe(el));
     return () => observer.disconnect();
-  }, [categories, mounted]);
+  }, [categories, mounted, menuLoading, orderId]);
 
   const go = useCallback((id: string | null) => {
     window.history.pushState(null, '', id ? `?order=${id}` : window.location.pathname);
@@ -159,8 +203,9 @@ export default function Storefront() {
       setOrderId(id);
       setCartOpen(false);
       setSheetOpen(false);
+      window.scrollTo(0, 0);
     });
-    window.scrollTo(0, 0);
+    if (!id) document.getElementById('content')?.focus({ preventScroll: true });
   }, []);
 
   const addLine = useCallback((line: CartLine, source: Element | null) => {
@@ -177,8 +222,6 @@ export default function Storefront() {
   const warmMenu = (id: string) => prefetchResource(`menu:${id}:${lang}`, () => api.menu(id, lang));
 
   const menuServing = activeMenu?.isAvailableNow ?? true;
-  const canOrder = state?.kind === 'open';
-  const blockedReason = state?.reason ?? null;
 
   const quickAdd = useCallback(
     (product: MenuProduct, source: Element | null) => {
@@ -204,17 +247,32 @@ export default function Storefront() {
   const jumpTo = useCallback(
     (categoryId: string) => {
       if (!document.getElementById(`cat-${categoryId}`)) flushSync(() => setMounted(categories.length));
-      document.getElementById(`cat-${categoryId}`)?.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' });
+      const target = document.getElementById(`cat-${categoryId}`);
+      if (!target) return;
+      // Hold the highlight on the chosen section while the page travels past the ones in between.
+      jumping.current = true;
       activeCategory.set(categoryId);
+      target.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' });
+      window.setTimeout(
+        () => {
+          // Sections above may have changed height as they rendered; settle exactly on the target.
+          target.scrollIntoView({ behavior: 'auto', block: 'start' });
+          jumping.current = false;
+        },
+        prefersReducedMotion() ? 50 : 700,
+      );
     },
     [categories.length],
   );
 
-  const fatal = !s && settings.error && settings.error.kind !== 'rate_limited' ? settings.error : null;
-  const menuError = menus.error ?? menu.error;
-  const menuLoading = !fatal && !menu.data && (!ready || menus.loading || menu.loading || (!menus.data && !menus.error));
   const recent = store.recent[0] ?? null;
-  const total = quoteState.quote ? (priceType === 'CASH_PRICE' ? quoteState.quote.cashTotal : quoteState.quote.cardTotal) : null;
+  const barCash = paymentOption !== 'PAY_ONLINE' && priceType === 'CASH_PRICE';
+  const total = quoteState.quote ? (barCash ? quoteState.quote.cashTotal : quoteState.quote.cardTotal) : null;
+  const orderingUnavailable = fatal
+    ? 'We can’t load the shop right now. Please try again in a little while.'
+    : s && !paymentOptions.length
+      ? 'The shop has not set up a way to pay for online orders yet. Please call us to order.'
+      : null;
 
   const cartPanel = (onClose?: () => void) => (
     <CartPanel
@@ -224,14 +282,14 @@ export default function Storefront() {
       paymentOptions={paymentOptions}
       paymentOption={paymentOption}
       onPaymentOption={setPaymentChoice}
-      canOrder={!!canOrder}
-      blockedReason={blockedReason}
+      unavailable={orderingUnavailable}
+      unconfirmedAt={store.unconfirmedAt}
+      onBusy={setPlacing}
       lang={lang}
       contentLang={contentLang}
       titleId={cartTitleId}
       onClose={onClose}
       onPlaced={go}
-      loadingShell={!s}
     />
   );
 
@@ -242,11 +300,13 @@ export default function Storefront() {
       </a>
 
       <div className="banners" aria-live="polite">
-        {!online ? <p className="banner banner--offline">You’re offline. Your cart is kept on this phone until you’re back.</p> : null}
+        {!online ? <p className="banner banner--offline">You’re offline. Your cart is saved.</p> : null}
         {limitedSeconds > 0 ? (
           <p className="banner banner--limit">
             <ClockIcon width={16} height={16} />
-            We’re a little busy. Picking back up in <strong>{limitedSeconds}s</strong>.
+            We’re a little busy. Picking back up shortly.
+            {/* The ticking number is for the eye only; a live region would read it out every second. */}
+            <strong aria-hidden="true">{limitedSeconds}s</strong>
           </p>
         ) : null}
       </div>
@@ -268,7 +328,7 @@ export default function Storefront() {
               <img src={s.logoUrl} alt="" width={40} height={40} decoding="async" />
             ) : null}
           </span>
-          <span className="brand__name">{brand || (fatal ? null : <span className="skel skel--word" />)}</span>
+          <span className="brand__name">{brand || (fatal || s ? null : <span className="skel skel--word" />)}</span>
         </a>
         <div className="topbar__tools">
           {state ? (
@@ -312,14 +372,14 @@ export default function Storefront() {
       </header>
 
       {orderId ? (
-        <main id="content" className="order-main">
+        <main id="content" className="order-main" tabIndex={-1}>
           <OrderView
+            key={orderId}
             orderId={orderId}
             settings={s}
             paymentOptions={paymentOptions}
             lang={lang}
             contentLang={contentLang}
-            transactionId={store.recent.find((r) => r.orderId === orderId)?.transactionId ?? null}
             onNewOrder={() => go(null)}
           />
         </main>
@@ -340,7 +400,7 @@ export default function Storefront() {
             )}
           </nav>
 
-          <main id="content">
+          <main id="content" tabIndex={-1} inert={placing}>
             <section className="hero" aria-labelledby="hero-title">
               <div className="hero__text">
                 <p className="hero__top">
@@ -459,7 +519,7 @@ export default function Storefront() {
                           {!m.isAvailableNow ? <span className="menu-tab__off">Not serving now</span> : null}
                         </button>
                       ))
-                    : !menus.error
+                    : !menus.error && !menus.data
                       ? Array.from({ length: 4 }, (_, i) => <span key={i} className="menu-tab menu-tab--skeleton skel" />)
                       : null}
                 </div>
@@ -533,6 +593,13 @@ export default function Storefront() {
                         />
                       ))
                   )}
+                  {menus.data && !menuList.length ? (
+                    <section className="state-page state-page--inline">
+                      <p className="eyebrow">Coming soon</p>
+                      <h2>The menu isn’t published yet.</h2>
+                      <p>Please check back a little later.</p>
+                    </section>
+                  ) : null}
                   {!menuLoading && !menuError && activeMenu && !categories.length ? (
                     <section className="state-page state-page--inline">
                       <p className="eyebrow">Empty for now</p>
@@ -566,8 +633,8 @@ export default function Storefront() {
           <ProductSheet
             product={sheetProduct}
             open={sheetOpen}
-            orderable={!!canOrder && menuServing && (categories.find((c) => c.id === sheetProduct?.storeMenuCategoryId)?.isAvailableNow ?? true)}
-            blockedReason={blockedReason ?? 'This dish isn’t being served right now.'}
+            orderable={menuServing && (categories.find((c) => c.products?.some((p) => p === sheetProduct))?.isAvailableNow ?? true)}
+            blockedReason="This dish isn’t being served right now."
             priceType={priceType}
             lang={lang}
             contentLang={contentLang}

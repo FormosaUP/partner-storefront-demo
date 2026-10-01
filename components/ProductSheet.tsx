@@ -3,7 +3,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { formatMoney, pickPrice } from '@/lib/format';
-import { useResource } from '@/lib/hooks';
+import { prefersReducedMotion, useResource } from '@/lib/hooks';
 import { lineKey, type CartLine, type CartModifier } from '@/lib/store';
 import type { MenuProduct, PriceType, ProductModifier } from '@/lib/types';
 import { CheckIcon, CloseIcon, Photo, Sheet, Stepper } from './ui';
@@ -19,7 +19,7 @@ interface Props {
   product: MenuProduct | null;
   open: boolean;
   orderable: boolean;
-  blockedReason: string | null;
+  blockedReason: string;
   priceType: PriceType;
   lang: string | null;
   contentLang: string;
@@ -40,7 +40,7 @@ export default function ProductSheet({ product, open, orderable, blockedReason, 
   const [quantity, setQuantity] = useState(1);
   const [note, setNote] = useState('');
   const [showMissing, setShowMissing] = useState(false);
-  const [lowRes, setLowRes] = useState(false);
+  const [smallPhotos, setSmallPhotos] = useState<Record<string, boolean>>({});
 
   const needsOptions = !!product?.hasModifier;
   const options = useResource(
@@ -54,17 +54,18 @@ export default function ProductSheet({ product, open, orderable, blockedReason, 
     setQuantity(1);
     setNote('');
     setShowMissing(false);
-    setLowRes(false);
   }, [product?.productId, product?.storeMenuCategoryId, open]);
 
-  const groups = useMemo(
-    () => (options.data?.modifiers ?? []).filter((g) => g.type === 'STANDARD' && (g.items?.length ?? 0) > 0),
-    [options.data],
-  );
+  const groups = useMemo(() => (options.data?.modifiers ?? []).filter((g) => g.type === 'STANDARD' && (g.items?.length ?? 0) > 0), [options.data]);
   // Open-price options cannot be expressed in a quote request, so a dish that requires one is not orderable here.
   const needsOpenPrice = (options.data?.openPriceModifiers ?? []).some((m) => m.isRequired);
 
-  if (!product) return <Sheet open={false} onClose={onClose} labelledBy={titleId} variant="product">{null}</Sheet>;
+  if (!product)
+    return (
+      <Sheet open={false} onClose={onClose} labelledBy={titleId} variant="product">
+        {null}
+      </Sheet>
+    );
 
   const name = product.name ?? '';
   const soldOut = product.availabilityStatus !== 'AVAILABLE';
@@ -93,7 +94,9 @@ export default function ProductSheet({ product, open, orderable, blockedReason, 
   const submit = () => {
     if (missing.length) {
       setShowMissing(true);
-      document.getElementById(`group-${missing[0].id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      const group = document.getElementById(`group-${missing[0].id}`);
+      group?.scrollIntoView({ block: 'center', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+      group?.querySelector<HTMLInputElement>('input:not(:disabled)')?.focus({ preventScroll: true });
       return;
     }
     const modifiers: CartModifier[] = groups
@@ -136,7 +139,10 @@ export default function ProductSheet({ product, open, orderable, blockedReason, 
           <CloseIcon />
         </button>
         <div className="dish__scroll">
-          <div ref={photoRef} className={`dish__photo ${lowRes ? 'dish__photo--small' : ''} ${product.imageUrl ? '' : 'dish__photo--none'}`}>
+          <div
+            ref={photoRef}
+            className={`dish__photo ${smallPhotos[product.productId] ? 'dish__photo--small' : ''} ${product.imageUrl ? '' : 'dish__photo--none'}`}
+          >
             <Photo
               key={product.productId}
               src={product.imageUrl}
@@ -144,7 +150,7 @@ export default function ProductSheet({ product, open, orderable, blockedReason, 
               seed={product.productId}
               alt={product.imageUrl ? name : ''}
               eager
-              onNaturalSize={(w) => setLowRes(w < 520)}
+              onNaturalSize={(w) => setSmallPhotos((m) => (m[product.productId] === w < 520 ? m : { ...m, [product.productId]: w < 520 }))}
             />
           </div>
           <header className="dish__head">
@@ -159,11 +165,13 @@ export default function ProductSheet({ product, open, orderable, blockedReason, 
             ) : null}
             {product.tags?.some((t) => TAG_LABELS[t]) ? (
               <ul className="tags" lang="en">
-                {product.tags.filter((t) => TAG_LABELS[t]).map((t) => (
-                  <li key={t} className={`tag tag--${t.toLowerCase()}`}>
-                    {TAG_LABELS[t]}
-                  </li>
-                ))}
+                {product.tags
+                  .filter((t) => TAG_LABELS[t])
+                  .map((t) => (
+                    <li key={t} className={`tag tag--${t.toLowerCase()}`}>
+                      {TAG_LABELS[t]}
+                    </li>
+                  ))}
               </ul>
             ) : null}
           </header>
@@ -181,9 +189,7 @@ export default function ProductSheet({ product, open, orderable, blockedReason, 
           {needsOptions && options.error ? (
             <div className="inline-state" role="alert" lang="en">
               <p>
-                {options.error.kind === 'rate_limited'
-                  ? 'One moment. We are loading the options again shortly.'
-                  : 'The options for this dish did not load.'}
+                {options.error.kind === 'rate_limited' ? 'One moment. We are loading the options again shortly.' : 'The options for this dish did not load.'}
               </p>
               {options.error.kind !== 'rate_limited' ? (
                 <button type="button" className="btn btn--ghost btn--sm" onClick={options.reload}>

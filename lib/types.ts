@@ -4,18 +4,8 @@ export type PriceType = 'CASH_PRICE' | 'CARD_PRICE';
 export type PaymentOption = 'PAY_IN_STORE' | 'PAY_ONLINE';
 export type OrderType = 'FOR_HERE' | 'TO_GO' | 'PICK_UP' | 'DELIVERY' | 'IN_STORE' | 'DINE_IN';
 export type AvailabilityStatus = 'AVAILABLE' | 'UNAVAILABLE';
-export type FulfillmentBlock =
-  | 'PAUSED'
-  | 'CLOSED_HOURS'
-  | 'RESTRICTED'
-  | 'PICKUP_DISABLED'
-  | 'DELIVERY_DISABLED'
-  | 'PAYMENT_OPTION';
-export type ScheduleBlock =
-  | 'TIME_IN_PAST'
-  | 'STORE_NOT_ACCEPTING_FUTURE'
-  | 'BEYOND_FUTURE_LIMIT'
-  | 'OUTSIDE_OPEN_HOURS';
+export type FulfillmentBlock = 'PAUSED' | 'CLOSED_HOURS' | 'RESTRICTED' | 'PICKUP_DISABLED' | 'DELIVERY_DISABLED' | 'PAYMENT_OPTION';
+export type ScheduleBlock = 'TIME_IN_PAST' | 'STORE_NOT_ACCEPTING_FUTURE' | 'BEYOND_FUTURE_LIMIT' | 'OUTSIDE_OPEN_HOURS';
 export type FulfillmentStatus = 'NEW' | 'PREPARING' | 'READY' | 'FULFILLED' | 'CANCELLED';
 export type OrderStatusLabel = 'UNPAID' | 'REFUNDED' | 'PARTIALLY_REFUNDED' | 'PENDING' | 'PAID' | 'CANCELLED';
 export type AdjustType = 'TAX' | 'FEE' | 'DISCOUNT' | 'CREDIT' | 'FREE_ITEM' | 'TIP' | 'DELIVERY_FEE';
@@ -169,7 +159,7 @@ export interface Quote {
   cashSubTotal: number;
   orderProducts: PreviewProduct[] | null;
   financialAdjustments: FinancialAdjustment[] | null;
-  orderProductStocks: { productId: string; isStockSufficient: boolean; isAvailable: boolean }[] | null;
+  orderProductStocks: { productId: string; isStockSufficient: boolean; availableStock: number | null; isAvailable: boolean }[] | null;
   discountDetails: { productDiscounts: DiscountDetail[] | null; orderDiscounts: DiscountDetail[] | null } | null;
   estimatedWaitMinutes: { min: number; max: number } | null;
   minOrderAmount: number | null;
@@ -209,9 +199,13 @@ export interface OrderProduct {
   subTotal: number;
   cashSubTotal: number | null;
   cardSubTotal: number | null;
-  modifiers:
-    | { id: string; modifierName: string | null; modifierItems: { itemId: string; name: string | null; quantity: number }[] | null }[]
-    | null;
+  modifiers: { id: string; modifierName: string | null; modifierItems: { itemId: string; name: string | null; quantity: number }[] | null }[] | null;
+}
+
+export interface OrderTransaction {
+  transactionId: string;
+  transactionStatusLabel: 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'REFUNDED' | 'VOIDED';
+  createDatetime: number;
 }
 
 export interface OrderDetail {
@@ -227,6 +221,7 @@ export interface OrderDetail {
   cardTotal: number | null;
   products: OrderProduct[] | null;
   adjustments: OrderAdjustment[] | null;
+  transaction: OrderTransaction[] | null;
   orderSerialNumber: string | null;
   checkoutType: PaymentOption;
   pickupName: string | null;

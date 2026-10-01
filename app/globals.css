@@ -6,6 +6,8 @@
   --ink: #1d1a16;
   --ink-2: #594f44;
   --line: #d8cfbd;
+  /* Boundary of form controls: 3:1 against the card surface. */
+  --control: #8c8373;
   --persimmon: #b8431a;
   --persimmon-deep: #96340f;
   --amber: #e2953f;
@@ -34,6 +36,7 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  scroll-padding-bottom: 96px;
   overflow-x: hidden;
   scroll-padding-top: calc(var(--topbar) + 64px);
   scrollbar-gutter: stable;
@@ -318,7 +321,7 @@ h2:focus,
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  height: 32px;
+  min-height: 32px;
   padding: 0 12px;
   border-radius: 999px;
   border: 1px solid var(--line);
@@ -672,6 +675,7 @@ main {
 }
 
 .btn.is-busy {
+  color: #1d1a16;
   background: repeating-linear-gradient(-45deg, #b7ad99 0 12px, #c6bca8 12px 24px) 0 0 / 68px 100%;
   animation: stripes 0.9s linear infinite;
 }
@@ -720,7 +724,7 @@ main {
   gap: 2px;
   align-content: start;
   min-width: 7.5rem;
-  height: 84px;
+  min-height: 84px;
   padding: 12px 14px;
   text-align: left;
   border: 1.5px solid var(--ink);
@@ -1108,6 +1112,12 @@ main {
   animation: fade 0.25s both;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .sheet::backdrop {
+    animation: none;
+  }
+}
+
 .sheet.is-closing::backdrop {
   animation: fade 0.22s reverse both;
 }
@@ -1310,7 +1320,7 @@ main {
   gap: 12px;
   min-height: 54px;
   padding: 10px 14px;
-  border: 1.5px solid var(--line);
+  border: 1.5px solid var(--control);
   border-radius: 14px;
   background: var(--card);
   cursor: pointer;
@@ -1417,7 +1427,7 @@ textarea,
   display: block;
   width: 100%;
   padding: 12px 14px;
-  border: 1.5px solid var(--line);
+  border: 1.5px solid var(--control);
   border-radius: 12px;
   background: var(--card);
   resize: vertical;
@@ -1830,7 +1840,7 @@ dl.totals > div {
   gap: 12px;
   padding: 12px 14px;
   margin-bottom: 8px;
-  border: 1.5px solid var(--line);
+  border: 1.5px solid var(--control);
   border-radius: 14px;
   background: var(--card);
   cursor: pointer;
@@ -2291,6 +2301,21 @@ dl.totals > div {
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation-duration: 0.3s;
+}
+
+/* ---------- Short screens ---------- */
+
+/* Landscape phones: the totals and button scroll with the form instead of squeezing it out. */
+@media (max-height: 520px) {
+  .cart {
+    overflow-y: auto;
+  }
+
+  .cart__scroll,
+  .checkout {
+    flex: none;
+    overflow: visible;
+  }
 }
 
 /* ---------- Narrow phones ---------- */

@@ -121,18 +121,18 @@ export function Photo({ src, name, seed, alt = '', eager, className = '', onNatu
     <span ref={frameRef} className={`photo ${loaded ? 'is-loaded' : ''} ${className}`}>
       {/* The API offers one full-size file per photo, so each is held back until it is nearly on screen. */}
       {show ? (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        ref={ref}
-        src={src}
-        alt={alt}
-        decoding="async"
-        onLoad={(e) => {
-          setLoaded(true);
-          onNaturalSize?.(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight);
-        }}
-        onError={() => setFailed(true)}
-      />
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          ref={ref}
+          src={src}
+          alt={alt}
+          decoding="async"
+          onLoad={(e) => {
+            setLoaded(true);
+            onNaturalSize?.(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight);
+          }}
+          onError={() => setFailed(true)}
+        />
       ) : null}
     </span>
   );
@@ -150,11 +150,11 @@ interface StepperProps {
 export function Stepper({ value, min = 1, max = 99, onChange, label, size = 'md' }: StepperProps) {
   return (
     <div className={`stepper stepper--${size}`} role="group" aria-label={label}>
-      <button type="button" onClick={() => onChange(value - 1)} disabled={value <= min} aria-label={value - 1 <= 0 ? 'Remove' : 'Decrease quantity'}>
+      <button type="button" onClick={() => onChange(value - 1)} disabled={value <= min} aria-label={min === 0 && value === 1 ? 'Remove' : 'Decrease quantity'}>
         <MinusIcon width={16} height={16} />
       </button>
-      <output key={value} aria-live="polite">
-        {value}
+      <output aria-live="polite">
+        <span key={value}>{value}</span>
       </output>
       <button type="button" onClick={() => onChange(value + 1)} disabled={value >= max} aria-label="Increase quantity">
         <PlusIcon width={16} height={16} />
@@ -174,13 +174,14 @@ interface SheetProps {
 // Modal built on <dialog>: focus trap, Escape and background inertness come from the platform.
 export function Sheet({ open, onClose, labelledBy, variant, children }: SheetProps) {
   const ref = useRef<HTMLDialogElement>(null);
+  const pressedBackdrop = useRef(false);
 
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
-    if (open && !dialog.open) {
+    if (open) {
       dialog.classList.remove('is-closing');
-      dialog.showModal();
+      if (!dialog.open) dialog.showModal();
       return;
     }
     if (!open && dialog.open) {
@@ -206,8 +207,12 @@ export function Sheet({ open, onClose, labelledBy, variant, children }: SheetPro
         e.preventDefault();
         onClose();
       }}
+      onPointerDown={(e) => {
+        pressedBackdrop.current = e.target === ref.current;
+      }}
       onClick={(e) => {
-        if (e.target === ref.current) onClose();
+        // Only a press that both starts and ends on the backdrop closes; a text selection dragged outside does not.
+        if (e.target === ref.current && pressedBackdrop.current) onClose();
       }}
     >
       <div className="sheet__body">{children}</div>
@@ -216,18 +221,25 @@ export function Sheet({ open, onClose, labelledBy, variant, children }: SheetPro
 }
 
 // Sends a small copy of the dish photo arcing into the cart button.
-export function flyToCart(source: Element | null, color?: string) {
-  if (prefersReducedMotion() || !source) return;
-  const target = Array.from(document.querySelectorAll<HTMLElement>('[data-cart-target]')).reverse().find((el) => el.getClientRects().length > 0);
-  if (!target) return;
+export function flyToCart(source: Element | null) {
+  const target = Array.from(document.querySelectorAll<HTMLElement>('[data-cart-target]'))
+    .reverse()
+    .find((el) => el.getClientRects().length > 0);
+  if (!target || prefersReducedMotion()) return;
+  const bump = () => {
+    target.classList.remove('is-bumped');
+    void target.offsetWidth;
+    target.classList.add('is-bumped');
+  };
+  // From inside a dialog the flight would be hidden under it, so the cart just acknowledges the add.
+  if (!source || source.closest('dialog')) return bump();
   const from = source.getBoundingClientRect();
   const to = target.getBoundingClientRect();
   const size = Math.min(72, Math.max(44, from.width * 0.6));
   const dot = document.createElement('span');
   dot.className = 'fly-dot';
   const img = source.querySelector('img');
-  if (img?.currentSrc) dot.style.backgroundImage = `url("${img.currentSrc}")`;
-  else if (color) dot.style.background = color;
+  if (img?.currentSrc) dot.style.backgroundImage = `url(${JSON.stringify(img.currentSrc)})`;
   dot.style.width = dot.style.height = `${size}px`;
   dot.style.left = `${from.left + from.width / 2 - size / 2}px`;
   dot.style.top = `${from.top + from.height / 2 - size / 2}px`;
@@ -245,8 +257,6 @@ export function flyToCart(source: Element | null, color?: string) {
     )
     .finished.finally(() => {
       dot.remove();
-      target.classList.remove('is-bumped');
-      void target.offsetWidth;
-      target.classList.add('is-bumped');
+      bump();
     });
 }
