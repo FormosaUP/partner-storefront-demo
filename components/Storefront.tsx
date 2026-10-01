@@ -472,6 +472,7 @@ export default function Storefront() {
                     <img
                       src={s.bannerUrl}
                       alt=""
+                      fetchPriority="high"
                       decoding="async"
                       onLoad={(e) => e.currentTarget.classList.add('is-loaded')}
                       onError={() => setBannerFailed(true)}

@@ -21,18 +21,24 @@ Verified on the deployed page, against the real development store:
 3. Modifier groups with required and optional rules (`GET Product/Modifiers`).
 4. Cart, re-priced by `POST Order/Preview` after every change. Totals, discounts, fees and blocks are read from the quote.
 5. Pickup details, then a fresh quote immediately before `POST Order`, as the docs require.
-6. Order status page (`GET Order/{orderId}`), polling every 20 seconds while the order is open.
-7. Payment option taken from the store settings. This store offers `PAY_IN_STORE` only.
+6. Order status page (`GET Order/{orderId}`), polling every 20 seconds while the order is open and the tab is visible, and retrying with back-off after errors.
+7. Payment options taken from the store settings. The store offered `PAY_IN_STORE` only at first and added `PAY_ONLINE` during the work; both are supported.
+8. Online payment up to the hosted payment page: `POST Order`, `POST Transaction/Initial`, top-level navigation to the payment link, Back to the order page, and switching the unpaid order to pay at pickup with `PATCH Order/{orderId}`.
 
-Real orders placed: **1** (`ORD-1`, one item, pay at pickup, SMS updates off, phone number `2125550123` from the reserved fictional range).
+Real orders placed: **2**.
 
-Other calls made outside normal page use: read-only probes of the catalogue and modifiers, and two quotes sent by script to learn the response shape.
+- `ORD-1`: one item, pay at pickup.
+- `ORD-4`: one item, pay online. Stopped at the payment page (no card was entered), then switched to pay at pickup.
+
+Both used SMS updates off and the phone number `+1 212 555 0123` from the reserved fictional range.
+
+Other calls made outside normal page use: read-only probes of the catalogue and modifiers, and four quotes sent by script to learn response shapes (including how a phone number is read).
 
 ## What is not working or was left out
 
 | Item | Why |
 | --- | --- |
-| Online payment (`PAY_ONLINE`, `Transaction/Initial`, return from the payment page, retry, switch to pay in store) | Implemented from the documentation but **never exercised**: the store does not offer `PAY_ONLINE`. Treat as untested. |
+| Completing a card payment | No test card is documented, so no payment was completed. The success return, the "confirming your payment" state and a failed-payment retry are implemented from the documentation but **not exercised**. |
 | Scheduled pickup | The time zone of `schedulableWindows` and `scheduledTime` is not documented. Only "as soon as possible" orders are offered. |
 | Weekly opening hours | The `openHours` format is not documented (see gaps). Only open, closed or paused is shown. |
 | Tips | `TipInfo` is undocumented, and the docs place tips on the online payment call only. |
@@ -41,23 +47,33 @@ Other calls made outside normal page use: read-only probes of the catalogue and 
 | Delivery, accounts, loyalty, cancellation | Out of scope per the documentation. |
 | A real `429` | Not provoked on purpose. The rate-limit state was verified with a mocked response only. |
 | Interface language | Menu content follows the chosen store language; the interface text itself is English only. |
+| Banner on phones | Shown from tablet width up only. The single file on offer is 5760px wide and did not decode on a test phone. |
 
 ## Design decisions
 
 **Starting point.** The store's assets are a corgi logo, a banner of a grey cat on a celadon table, five menus from different kitchens, and photography that ranges from 2,000px studio shots to 150px thumbnails with price stickers. The design had to give that mix one voice.
 
-- **Palette.** Sampled from the store's own images: corgi amber and a deeper persimmon for actions, celadon and slate from the banner, on warm paper with brown-black ink. Paper rather than white, so photos with white backgrounds still read as framed. All text pairs meet WCAG AA.
+- **Palette.** Sampled from the store's own images: corgi amber and a deeper persimmon for actions, celadon and slate from the banner, on warm paper with brown-black ink. Paper rather than white, so photos with white backgrounds still read as framed. Text pairs meet WCAG AA and form-control borders meet 3:1.
 - **Type.** Fraunces (display, prices, numbers) with Instrument Sans (interface). Chinese, Japanese and Arabic content falls back to the system's native faces instead of shipping megabytes of web font. The hero headline uses the high-contrast display cut of Fraunces, subset to its own letters (6KB) and inlined, so it paints in its final face with the first frame.
 - **Visual language.** A counter ticket: numbered menus, dashed perforations with punched notches, a cart that looks like a ticket stub, and an order confirmation that prints out of the top of the page and gets stamped.
 - **Layout.** Phone first: one column, the photo and add button under the right thumb, a sticky section bar, and a bottom bar for the cart. Tablet: two-column hero with the banner, card grid, cart as a side drawer. Desktop: three working columns (section rail, menu, a persistent ticket), not a stretched phone.
 - **Photography.** Photos are the largest thing on every card. A dish with no photo, or a broken one, gets a tinted tile carrying its first character. In the dish dialog, a low-resolution photo is shown as a small framed print instead of being stretched.
-- **Motion.** Each animation reports something: a photo flies into the cart and the cart bumps; the plus button turns into the quantity; option checkmarks draw themselves and the "Required" pill turns into a tick; a missed required group shakes; the ticket prints and is stamped. Skeletons hold the exact space of the content. `prefers-reduced-motion` removes all of it.
+- **Motion.** Each animation reports something: a photo flies into the cart and the cart bumps (from the dish dialog the cart just bumps); the plus button turns into the quantity; option checkmarks draw themselves and the "Required" pill turns into a tick; a missed required group shakes; the ticket prints and is stamped. Skeletons reserve the space of the content they stand in for (measured layout shift 0.003). `prefers-reduced-motion` removes the motion.
 - **Wordmark.** The API returns no store name, so the wordmark is the `subdomain` value exactly as returned (`up-burger`).
-- **Accessibility.** Native `<dialog>` for focus trapping and Escape, real radio and checkbox inputs for options, labelled fields with inline errors, a skip link, visible focus rings, live regions for cart and status changes, and `lang` on store content.
+- **Accessibility.** Native `<dialog>` for focus trapping and Escape, real radio and checkbox inputs for options, labelled fields with inline errors, a skip link, visible focus rings, status announcements for cart changes, cart totals and order progress, and `lang` on store content.
 
-**Performance** (Lighthouse 12.8.2, mobile, deployed page): performance 93 to 97 over four runs in a visible Chrome window, accessibility 100 (96 in one run, where `target-size` flagged one add button), best practices 100, CLS 0.003. With applied slow-4G throttling: 86 to 87. In headless Chrome on the test machine the same page scored 79 to 95, because headless showed a blank first frame for about 2.5 seconds; real Chrome paints at 0.3 to 0.65 seconds, so this looks like a headless artifact, but it is not explained.
+**Performance** (Lighthouse 12.8.2 against the deployed page, visible Chrome window):
 
-The API offers one full-size file per image and no resized variants, so photos are requested only when they are about to scroll into view, and on phones the 1.3MB banner sits in the footer.
+| | Performance | Accessibility | Best practices | LCP | CLS |
+| --- | --- | --- | --- | --- | --- |
+| Mobile, three runs | 95, 96, 99 | 100 | 100 | 2.1 to 2.7 s | 0.003 |
+| Desktop, one run | 82 | 100 | 100 | 3.1 s | 0.002 |
+
+- The desktop score is held down by the store banner: it is the largest element, 1.3MB, and its address is only known after the settings call.
+- Headless Chrome on the test machine scored 79 to 95 on mobile because it showed a blank first frame for about 2.5 seconds. Real Chrome paints at 0.3 to 0.65 seconds. This looks like a headless artifact but is not explained.
+- Interaction, measured with 4x CPU throttling: switching to a menu already seen shows its dishes in the next frame (25 to 41 ms); a menu not seen before takes one request (about 130 to 170 ms); adding to the cart shows the count in about 100 ms.
+
+What was done for speed: photos are requested only when about to scroll into view (the API offers one full-size file per image); menu sections mount in idle slices and skip rendering while off screen; dish cards are memoised so a cart or scroll update touches only what changed; menus are cached in memory and warmed when a tab is hovered or focused; the headline font subset is inlined.
 
 ## Documentation gaps
 
@@ -86,7 +102,7 @@ Everything below is a place where the documentation was missing, ambiguous or wr
 16. **Modifier selection.** The quote accepts both `itemIds` and `items[{ itemId, quantity }]` with no guidance. The option's id is called `modifierId` in `Product/Modifiers` but `itemId` in the quote. `allowMultiSelection`, `maxQuantity` and `isModifierSufficient` are undocumented. I send `items` with quantity 1; the quote echoed the selection back correctly.
 17. **Open-price items.** `isOpenPrice` and `openPriceModifiers` exist, but the quote request has no price field.
 18. **Availability.** How `status`, `availabilityStatus`, `stock` and `isAvailableNow` (on menus and categories) relate is not stated. I treat `availabilityStatus` as sold out and `isAvailableNow: false` as not orderable now.
-19. **Phone number.** No format for `pickupPhone` and no country code field in the request, though responses carry `pickupCountryCode`. Ten digits were accepted and stored with country code `1`.
+19. **Phone number.** No format for `pickupPhone` and no country code field in the request, though responses carry `pickupCountryCode`. In practice both `2125550123` and `+12125550123` are accepted and stored as country code `1` plus the national number. The site sends the international form and defaults the field to `+1`.
 20. **SMS consent.** `agreeToSmsUpdates` is undocumented. The guide says the phone "receives the confirmation message" without saying whether that depends on this flag.
 21. **Order status.** Five status fields (`orderStatus`, `orderStatusDisplay`, `orderStatusLabel`, `lifecycleStatus`, `fulfillmentStatus`) with no guidance on which a customer page should follow, the transitions, or how often to poll. I follow `fulfillmentStatus` and `orderStatusLabel`.
 22. **Timestamps.** `createDatetime`, `estimateTime` and others are `int64` with no unit. They are epoch milliseconds in practice. The site does not display them.
@@ -97,15 +113,27 @@ Everything below is a place where the documentation was missing, ambiguous or wr
 27. **Images.** No sizes, formats or resizing parameters. The banner is 5760 by 3298 (1.3MB); product photos range from 153px to 2242px wide.
 28. **Query parameters.** `scheduledTime` and `name` on the menu endpoints have no description.
 29. **Development server.** The docs list production and staging only.
-30. **Language header.** Its description refers to internal storage ("from Language.Code in database") and hardcodes seven codes, while the guide says to use `Store/Languages`.
+30. **`Transaction/Initial` response.** The guide says it "carries a `transactionId`" to keep for `Transaction/Status`. The real response is `{ code, paymentLinkUrl }` with no `transactionId`, so `Transaction/Status` cannot be called from what this endpoint returns. The site reads payment attempts from `transaction[]` on `GET Order/{orderId}` instead.
+31. **When `PATCH` is allowed.** After `Transaction/Initial` had issued a payment link and the customer backed out, `PATCH` to `PAY_IN_STORE` succeeded. Whether an issued link counts as "a transaction attached" is not stated (see also item 5).
+32. **Test payments.** No test card numbers or sandbox instructions for the hosted payment page.
+33. **Settings change without notice.** `onlinePaymentOptions` changed while a page was open. Nothing says how fresh settings must be; the site refreshes them when the visitor returns to the tab after two minutes.
+34. **Language header.** Its description refers to internal storage ("from Language.Code in database") and hardcodes seven codes, while the guide says to use `Store/Languages`.
 
 ### Places where I had to choose
 
-- The wordmark is the `subdomain` value (gap 8) and amounts use `$` (gap 9).
-- Quote lines are matched to cart lines by position, after checking each `productId` matches. The response order is not documented; it matched in practice.
-- An empty cart is never quoted, although the API accepts one.
-- Per-dish running prices in the dish dialog are the listed price plus listed option prices. Cart and order totals always come from the server.
-- When `POST Order` gets no response, or returns `PREVIEW_ORDER_NOT_FOUND` straight after a fresh quote, the site says it cannot confirm the order and offers the store's phone number, as the guide advises.
+- The wordmark is the `subdomain` value (gap 8) and amounts use `# partner-storefront-demo
+
+A static, frontend-only ordering site built on the uLite Online Order Partner API, using nothing but its public documentation.
+
+- Live: https://formosaup.github.io/partner-storefront-demo/
+- API docs used: https://api-dev.ulite.com/online-order/partner/docs (OpenAPI file, version v1)
+- Stack: Next.js 16 static export, React 19, plain CSS. No backend, no keys, no secrets.
+
+![Phone flow](docs/screens/phone.png)
+![Desktop home and dish dialog](docs/screens/desktop.png)
+![Desktop cart and order ticket](docs/screens/desktop-2.png)
+![Designed states: loading, closed, sold out and no photo, unpublished, network failure, rate limited, unconfirmed order](docs/screens/states.png)
+![Tablet, 768px](docs/screens/tablet-768.png)
 
 ## Development
 
