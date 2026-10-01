@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom';
 import { api, type ApiError } from '@/lib/api';
 import { formatMoney, pickPrice } from '@/lib/format';
-import { prefersReducedMotion, prefetchResource, useMedia, useNearViewport, useOnline, useQuote, useRateLimitSeconds, useResource } from '@/lib/hooks';
+import { prefersReducedMotion, prefetchResource, useMedia, useOnline, useQuote, useRateLimitSeconds, useResource } from '@/lib/hooks';
 import { cart, hydrateStore, lineKey, prefs, useStore, type CartLine } from '@/lib/store';
 import type { MenuProduct, PaymentOption, PriceType, StoreSettings } from '@/lib/types';
 import CartPanel from './CartPanel';
@@ -63,12 +63,12 @@ export default function Storefront() {
   const [announcement, setAnnouncement] = useState('');
   const [mounted, setMounted] = useState(2);
   const isDesktop = useMedia('(min-width: 1100px)');
-  // From tablet width up the banner sits in the hero; on phones it moves to the footer so it never delays the first screen.
+  // The banner is shown from tablet width up. Phones skip it: the only file on offer is 5760px wide.
   const isWide = useMedia('(min-width: 700px)');
+  const [bannerFailed, setBannerFailed] = useState(false);
   const online = useOnline();
   const limitedSeconds = useRateLimitSeconds();
   const cartTitleId = useId();
-  const [footerMediaRef, footerNear] = useNearViewport<HTMLDivElement>('200px');
   const lang = store.lang;
 
   useEffect(() => {
@@ -404,12 +404,21 @@ export default function Storefront() {
                   </button>
                 ) : null}
               </div>
-              <div className="hero__media">
-                {s?.bannerUrl && isWide ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={s.bannerUrl} alt="" loading="lazy" decoding="async" onLoad={(e) => e.currentTarget.classList.add('is-loaded')} />
-                ) : null}
-              </div>
+              {/* Tablet and desktop only. If the store has no banner, or it fails to decode, the hero falls back to text alone. */}
+              {isWide && s && (!s.bannerUrl || bannerFailed) ? null : (
+                <div className="hero__media">
+                  {s?.bannerUrl && isWide ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={s.bannerUrl}
+                      alt=""
+                      decoding="async"
+                      onLoad={(e) => e.currentTarget.classList.add('is-loaded')}
+                      onError={() => setBannerFailed(true)}
+                    />
+                  ) : null}
+                </div>
+              )}
             </section>
 
             {fatal ? (
@@ -572,12 +581,6 @@ export default function Storefront() {
       ) : null}
 
       <footer className="footer">
-        {s?.bannerUrl && !isWide && !orderId ? (
-          <div className="footer__media" ref={footerMediaRef}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            {footerNear ? <img src={s.bannerUrl} alt="" decoding="async" /> : null}
-          </div>
-        ) : null}
         <p className="footer__brand">{brand}</p>
         <p>{s?.address?.formattedAddress}</p>
         <p className="footer__small">Prices and totals are confirmed by the kitchen when you place your order.</p>

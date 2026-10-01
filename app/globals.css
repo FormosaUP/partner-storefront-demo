@@ -34,6 +34,7 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  overflow-x: hidden;
   scroll-padding-top: calc(var(--topbar) + 64px);
   scrollbar-gutter: stable;
 }
@@ -210,6 +211,8 @@ h2:focus,
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
+  /* Nothing may pan the page sideways; clip keeps the sticky bars working. */
+  overflow-x: clip;
 }
 
 .banners {
@@ -819,7 +822,8 @@ main {
 .section {
   padding-top: 26px;
   content-visibility: auto;
-  contain-intrinsic-size: auto 720px;
+  /* Height only: a width estimate would let unrendered sections widen the page in Safari. */
+  contain-intrinsic-block-size: auto 720px;
 }
 
 .section__head {
@@ -2271,23 +2275,6 @@ dl.totals > div {
   color: var(--ink-2);
 }
 
-.footer__media {
-  max-width: 30rem;
-  aspect-ratio: 16 / 7;
-  margin: 0 auto 22px;
-  border-radius: 20px 20px 20px 4px;
-  overflow: hidden;
-  background: var(--celadon-soft);
-  box-shadow: 0 0 0 1.5px var(--ink);
-}
-
-.footer__media img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
 .footer__brand {
   font-family: var(--display);
   font-size: 1.25rem;
@@ -2343,6 +2330,10 @@ dl.totals > div {
     gap: 28px;
     align-items: stretch;
     padding-top: 32px;
+  }
+
+  .hero:not(:has(.hero__media)) {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .hero h1 {
