@@ -55,6 +55,8 @@ export default function Storefront() {
   const [announcement, setAnnouncement] = useState('');
   const [mounted, setMounted] = useState(2);
   const isDesktop = useMedia('(min-width: 1100px)');
+  // From tablet width up the banner sits in the hero; on phones it moves to the footer so it never delays the first screen.
+  const isWide = useMedia('(min-width: 700px)');
   const online = useOnline();
   const limitedSeconds = useRateLimitSeconds();
   const cartTitleId = useId();
@@ -392,7 +394,7 @@ export default function Storefront() {
                 ) : null}
               </div>
               <div className="hero__media">
-                {s?.bannerUrl && isDesktop ? (
+                {s?.bannerUrl && isWide ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={s.bannerUrl} alt="" loading="lazy" decoding="async" onLoad={(e) => e.currentTarget.classList.add('is-loaded')} />
                 ) : null}
@@ -603,7 +605,7 @@ export default function Storefront() {
       ) : null}
 
       <footer className="footer">
-        {s?.bannerUrl && !isDesktop ? (
+        {s?.bannerUrl && !isWide ? (
           <div className="footer__media" ref={footerMediaRef}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             {footerNear ? <img src={s.bannerUrl} alt="" decoding="async" /> : null}
