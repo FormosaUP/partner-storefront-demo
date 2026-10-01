@@ -2672,7 +2672,7 @@ dl.totals > div {
   }
 
   .menu-tab {
-    flex: 1 1 7rem;
+    flex: 1 1 6.2rem;
     height: auto;
     min-height: 84px;
   }
