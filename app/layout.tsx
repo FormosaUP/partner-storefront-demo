@@ -6,7 +6,6 @@ import './globals.css';
 
 const display = Fraunces({
   subsets: ['latin'],
-  style: ['normal', 'italic'],
   variable: '--font-display',
   display: 'swap',
 });

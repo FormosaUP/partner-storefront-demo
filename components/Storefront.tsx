@@ -4,13 +4,15 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom';
 import { api, type ApiError } from '@/lib/api';
 import { formatMoney, pickPrice } from '@/lib/format';
-import { prefersReducedMotion, useMedia, useNearViewport, useOnline, useQuote, useRateLimitSeconds, useResource } from '@/lib/hooks';
+import { prefersReducedMotion, prefetchResource, useMedia, useNearViewport, useOnline, useQuote, useRateLimitSeconds, useResource } from '@/lib/hooks';
 import { cart, hydrateStore, lineKey, prefs, useStore, type CartLine } from '@/lib/store';
 import type { MenuProduct, PaymentOption, PriceType, StoreSettings } from '@/lib/types';
 import CartPanel from './CartPanel';
+import { activeCategory, CategoryLinks } from './CategoryNav';
+import { MenuSection } from './MenuSections';
 import OrderView from './OrderView';
-import ProductSheet, { TAG_LABELS } from './ProductSheet';
-import { ArrowIcon, BagIcon, ClockIcon, GlobeIcon, PhoneIcon, Photo, PinIcon, PlusIcon, Sheet, flyToCart } from './ui';
+import ProductSheet from './ProductSheet';
+import { ArrowIcon, BagIcon, ClockIcon, GlobeIcon, PhoneIcon, PinIcon, Sheet, flyToCart } from './ui';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -19,7 +21,8 @@ type StoreState = { kind: 'open' | 'closed' | 'paused' | 'off'; label: string; r
 function storeState(s: StoreSettings): StoreState {
   if (!s.onlineFunctionEnabled) return { kind: 'off', label: 'Online ordering off', reason: 'Online ordering is switched off at the moment.' };
   if (s.storePaused || s.isOnlinePaused) return { kind: 'paused', label: 'Paused', reason: 'The kitchen has paused online orders for the moment.' };
-  if (!(s.orderTypeOptions ?? []).includes('PICK_UP')) return { kind: 'off', label: 'Pickup unavailable', reason: 'Pickup orders are switched off at the moment.' };
+  if (!(s.orderTypeOptions ?? []).includes('PICK_UP'))
+    return { kind: 'off', label: 'Pickup unavailable', reason: 'Pickup orders are switched off at the moment.' };
   if (!s.asapAvailable) return { kind: 'closed', label: 'Closed now', reason: 'We are closed right now. Have a look around, and order when we reopen.' };
   return { kind: 'open', label: 'Open now', reason: null };
 }
@@ -32,7 +35,13 @@ function transition(change: () => void) {
 }
 
 function fatalCopy(e: ApiError) {
-  if (e.kind === 'network') return { eyebrow: 'No connection', title: 'We can’t reach the kitchen.', body: 'Check your connection. The menu will load as soon as you are back online.', retry: true };
+  if (e.kind === 'network')
+    return {
+      eyebrow: 'No connection',
+      title: 'We can’t reach the kitchen.',
+      body: 'Check your connection. The menu will load as soon as you are back online.',
+      retry: true,
+    };
   if (e.code === 'STORE_UNPUBLISHED' || e.code === 'FUNCTION_DISABLED')
     return { eyebrow: 'Back soon', title: 'We’re not taking online orders right now.', body: 'Please call or drop by. We would love to see you.', retry: true };
   return {
@@ -51,7 +60,6 @@ export default function Storefront() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [paymentChoice, setPaymentChoice] = useState<PaymentOption | null>(null);
-  const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const [mounted, setMounted] = useState(2);
   const isDesktop = useMedia('(min-width: 1100px)');
@@ -60,7 +68,6 @@ export default function Storefront() {
   const online = useOnline();
   const limitedSeconds = useRateLimitSeconds();
   const cartTitleId = useId();
-  const chipsRef = useRef<HTMLDivElement>(null);
   const [footerMediaRef, footerNear] = useNearViewport<HTMLDivElement>('200px');
   const lang = store.lang;
 
@@ -78,11 +85,13 @@ export default function Storefront() {
 
   const settings = useResource(ready ? `settings:${lang}` : null, (signal) => api.settings(lang, signal));
   const languages = useResource(ready ? 'languages' : null, (signal) => api.languages(signal));
-  const menus = useResource(ready && !orderId ? `menus:${lang}` : null, (signal) => api.menus(lang, signal));
+  const menus = useResource(ready && !orderId ? `menus:${lang}` : null, (signal) => api.menus(lang, signal), true);
 
   const menuList = useMemo(() => [...(menus.data?.menus ?? [])].sort((a, b) => a.displayOrder - b.displayOrder), [menus.data]);
   const activeMenu = menuList.find((m) => m.id === store.menuId) ?? menuList.find((m) => m.isAvailableNow) ?? menuList[0] ?? null;
-  const menu = useResource(activeMenu && !orderId ? `menu:${activeMenu.id}:${lang}` : null, (signal) => api.menu(activeMenu!.id, lang, signal));
+  // A returning visitor's last menu starts loading alongside the menu list instead of after it.
+  const menuId = activeMenu?.id ?? (!menus.data && !menus.error ? store.menuId : null);
+  const menu = useResource(ready && menuId && !orderId ? `menu:${menuId}:${lang}` : null, (signal) => api.menu(menuId!, lang, signal), true);
   const categories = useMemo(
     () => [...(menu.data?.categories ?? [])].filter((c) => c.products?.length).sort((a, b) => a.displayOrder - b.displayOrder),
     [menu.data],
@@ -92,7 +101,7 @@ export default function Storefront() {
   const state = s ? storeState(s) : null;
   const priceType: PriceType = s?.defaultPriceType ?? 'CARD_PRICE';
   const paymentOptions = s?.onlinePaymentOptions ?? [];
-  const paymentOption = paymentChoice && paymentOptions.includes(paymentChoice) ? paymentChoice : paymentOptions[0] ?? null;
+  const paymentOption = paymentChoice && paymentOptions.includes(paymentChoice) ? paymentChoice : (paymentOptions[0] ?? null);
   const contentLang = lang ?? s?.defaultLanguageCode ?? 'en';
   const quoteState = useQuote(store.lines, paymentOption, lang);
   const count = store.lines.reduce((n, l) => n + l.quantity, 0);
@@ -117,12 +126,12 @@ export default function Storefront() {
     let handle = 0;
     // Safari has no requestIdleCallback, so a short timer stands in for it there.
     const hasIdle = typeof window.requestIdleCallback === 'function';
-    const idle = (fn: () => void): number => (hasIdle ? window.requestIdleCallback(fn, { timeout: 400 }) : setTimeout(fn, 60) as unknown as number);
+    const idle = (fn: () => void): number => (hasIdle ? window.requestIdleCallback(fn, { timeout: 400 }) : (setTimeout(fn, 60) as unknown as number));
     const cancel = (id: number) => (hasIdle ? window.cancelIdleCallback(id) : clearTimeout(id));
     const step = () => {
       setMounted((n) => {
-        if (n + 3 < categories.length) handle = idle(step);
-        return n + 3;
+        if (n + 2 < categories.length) handle = idle(step);
+        return n + 2;
       });
     };
     handle = idle(step);
@@ -132,23 +141,17 @@ export default function Storefront() {
   // Highlight the section currently under the sticky header.
   useEffect(() => {
     if (!categories.length) return;
-    setActiveCategory((current) => (categories.some((c) => c.id === current) ? current : categories[0].id));
+    if (!categories.some((c) => c.id === activeCategory.get())) activeCategory.set(categories[0].id);
     const observer = new IntersectionObserver(
       (entries) => {
         const visible = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
-        if (visible) setActiveCategory((visible.target as HTMLElement).dataset.category ?? null);
+        if (visible) activeCategory.set((visible.target as HTMLElement).dataset.category ?? null);
       },
       { rootMargin: '-140px 0px -55% 0px' },
     );
     document.querySelectorAll('[data-category]').forEach((el) => observer.observe(el));
     return () => observer.disconnect();
   }, [categories, mounted]);
-
-  useEffect(() => {
-    const row = chipsRef.current;
-    const chip = row?.querySelector<HTMLElement>('[aria-current="true"]');
-    if (row && chip) row.scrollTo({ left: chip.offsetLeft - row.clientWidth / 2 + chip.clientWidth / 2, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
-  }, [activeCategory]);
 
   const go = useCallback((id: string | null) => {
     window.history.pushState(null, '', id ? `?order=${id}` : window.location.pathname);
@@ -166,42 +169,50 @@ export default function Storefront() {
     requestAnimationFrame(() => flyToCart(source));
   }, []);
 
-  const openProduct = (product: MenuProduct) => {
+  const openProduct = useCallback((product: MenuProduct) => {
     setSheetProduct(product);
     setSheetOpen(true);
-  };
+  }, []);
+
+  const warmMenu = (id: string) => prefetchResource(`menu:${id}:${lang}`, () => api.menu(id, lang));
 
   const menuServing = activeMenu?.isAvailableNow ?? true;
   const canOrder = state?.kind === 'open';
   const blockedReason = state?.reason ?? null;
 
-  const quickAdd = (product: MenuProduct, source: Element | null) => {
-    if (product.hasModifier || product.isOpenPrice) return openProduct(product);
-    addLine(
-      {
-        key: lineKey(product.productId, product.storeMenuCategoryId, [], ''),
-        productId: product.productId,
-        storeMenuCategoryId: product.storeMenuCategoryId,
-        name: product.name ?? '',
-        imageUrl: product.imageUrl,
-        unitPrice: pickPrice(product, priceType),
-        quantity: 1,
-        note: '',
-        modifiers: [],
-      },
-      source,
-    );
-  };
+  const quickAdd = useCallback(
+    (product: MenuProduct, source: Element | null) => {
+      if (product.hasModifier || product.isOpenPrice) return openProduct(product);
+      addLine(
+        {
+          key: lineKey(product.productId, product.storeMenuCategoryId, [], ''),
+          productId: product.productId,
+          storeMenuCategoryId: product.storeMenuCategoryId,
+          name: product.name ?? '',
+          imageUrl: product.imageUrl,
+          unitPrice: pickPrice(product, priceType),
+          quantity: 1,
+          note: '',
+          modifiers: [],
+        },
+        source,
+      );
+    },
+    [addLine, openProduct, priceType],
+  );
 
-  const jumpTo = (categoryId: string) => {
-    if (!document.getElementById(`cat-${categoryId}`)) flushSync(() => setMounted(categories.length));
-    document.getElementById(`cat-${categoryId}`)?.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' });
-    setActiveCategory(categoryId);
-  };
+  const jumpTo = useCallback(
+    (categoryId: string) => {
+      if (!document.getElementById(`cat-${categoryId}`)) flushSync(() => setMounted(categories.length));
+      document.getElementById(`cat-${categoryId}`)?.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' });
+      activeCategory.set(categoryId);
+    },
+    [categories.length],
+  );
 
   const fatal = !s && settings.error && settings.error.kind !== 'rate_limited' ? settings.error : null;
   const menuError = menus.error ?? menu.error;
-  const menuLoading = !fatal && (!ready || menus.loading || menu.loading || (!menus.data && !menus.error));
+  const menuLoading = !fatal && !menu.data && (!ready || menus.loading || menu.loading || (!menus.data && !menus.error));
   const recent = store.recent[0] ?? null;
   const total = quoteState.quote ? (priceType === 'CASH_PRICE' ? quoteState.quote.cashTotal : quoteState.quote.cardTotal) : null;
 
@@ -223,14 +234,6 @@ export default function Storefront() {
       loadingShell={!s}
     />
   );
-
-  const categoryLinks = (variant: 'rail' | 'chips') =>
-    categories.map((c) => (
-      <button key={c.id} type="button" className={`cat-link cat-link--${variant}`} aria-current={activeCategory === c.id ? 'true' : undefined} onClick={() => jumpTo(c.id)}>
-        <span dir="auto">{c.name}</span>
-        {variant === 'rail' ? <span className="cat-link__count">{c.products?.length}</span> : null}
-      </button>
-    ));
 
   return (
     <div className="app" data-view={orderId ? 'order' : 'menu'}>
@@ -294,7 +297,13 @@ export default function Storefront() {
             </label>
           ) : null}
           {!orderId ? (
-            <button type="button" className="topbar__cart" data-cart-target onClick={() => setCartOpen(true)} aria-label={`Your cart, ${count} ${count === 1 ? 'item' : 'items'}`}>
+            <button
+              type="button"
+              className="topbar__cart"
+              data-cart-target
+              onClick={() => setCartOpen(true)}
+              aria-label={`Your cart, ${count} ${count === 1 ? 'item' : 'items'}`}
+            >
               <BagIcon />
               {count ? <span className="badge">{count}</span> : null}
             </button>
@@ -326,7 +335,7 @@ export default function Storefront() {
               </div>
             ) : (
               <div className="rail__list" lang={contentLang}>
-                {categoryLinks('rail')}
+                <CategoryLinks variant="rail" categories={categories} onJump={jumpTo} />
               </div>
             )}
           </nav>
@@ -353,7 +362,11 @@ export default function Storefront() {
                     <PinIcon width={18} height={18} />
                     {s ? (
                       s.address?.formattedAddress ? (
-                        <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.address.formattedAddress)}`} target="_blank" rel="noreferrer">
+                        <a
+                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.address.formattedAddress)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
                           {s.address.formattedAddress}
                         </a>
                       ) : (
@@ -386,9 +399,7 @@ export default function Storefront() {
                 </ul>
                 {recent ? (
                   <button type="button" className="recent" onClick={() => go(recent.orderId)}>
-                    <span>
-                      Your last order{recent.serial ? <strong> {recent.serial}</strong> : null}
-                    </span>
+                    <span>Your last order{recent.serial ? <strong> {recent.serial}</strong> : null}</span>
                     <ArrowIcon width={16} height={16} />
                   </button>
                 ) : null}
@@ -428,7 +439,9 @@ export default function Storefront() {
                           type="button"
                           className="menu-tab"
                           aria-pressed={activeMenu?.id === m.id}
-                          onClick={() => transition(() => prefs.setMenu(m.id))}
+                          onClick={() => prefs.setMenu(m.id)}
+                          onPointerEnter={() => warmMenu(m.id)}
+                          onFocus={() => warmMenu(m.id)}
                         >
                           <span className="menu-tab__no">{String(i + 1).padStart(2, '0')}</span>
                           <span className="menu-tab__name" dir="auto" lang={contentLang}>
@@ -442,11 +455,13 @@ export default function Storefront() {
                       : null}
                 </div>
 
-                <div className="chips" ref={chipsRef} role="group" aria-label="Menu sections">
+                <div className="chips" role="group" aria-label="Menu sections">
                   <div className="chips__row" lang={contentLang}>
-                    {menuLoading
-                      ? Array.from({ length: 5 }, (_, i) => <span key={i} className="skel skel--chip-sm" />)
-                      : categoryLinks('chips')}
+                    {menuLoading ? (
+                      Array.from({ length: 5 }, (_, i) => <span key={i} className="skel skel--chip-sm" />)
+                    ) : (
+                      <CategoryLinks variant="chips" categories={categories} onJump={jumpTo} />
+                    )}
                   </div>
                 </div>
 
@@ -495,67 +510,19 @@ export default function Storefront() {
                       </ul>
                     </div>
                   ) : (
-                    categories.slice(0, mounted).map((category) => {
-                      const serving = menuServing && category.isAvailableNow;
-                      return (
-                        <section key={category.id} id={`cat-${category.id}`} data-category={category.id} className="section" aria-labelledby={`cat-title-${category.id}`}>
-                          <header className="section__head">
-                            <h2 id={`cat-title-${category.id}`} dir="auto">
-                              {category.name}
-                            </h2>
-                            <span className="section__count" lang="en">
-                              {category.products!.length} {category.products!.length === 1 ? 'dish' : 'dishes'}
-                              {!category.isAvailableNow && menuServing ? ' · not serving now' : ''}
-                            </span>
-                          </header>
-                          <ul className="grid">
-                            {category.products!.map((product, i) => {
-                              const name = product.name ?? '';
-                              const soldOut = product.availabilityStatus !== 'AVAILABLE';
-                              const qty = inCart.get(`${product.productId}/${product.storeMenuCategoryId}`) ?? 0;
-                              const addable = serving && !soldOut;
-                              return (
-                                <li key={product.productId} className={`card ${soldOut ? 'is-out' : ''}`} style={{ ['--i' as string]: Math.min(i, 8) }}>
-                                  <button type="button" className="card__open" onClick={() => openProduct(product)} aria-haspopup="dialog">
-                                    <span className="card__text">
-                                      <span className="card__name" dir="auto">
-                                        {name}
-                                      </span>
-                                      {product.description ? (
-                                        <span className="card__desc" dir="auto">
-                                          {product.description}
-                                        </span>
-                                      ) : null}
-                                      <span className="card__meta" lang="en">
-                                        <span className="card__price">{formatMoney(pickPrice(product, priceType))}</span>
-                                        {soldOut ? <span className="tag tag--out">Sold out</span> : null}
-                                        {(product.tags ?? []).filter((t) => TAG_LABELS[t] && t !== 'SNAP').map((t) => (
-                                          <span key={t} className={`tag tag--${t.toLowerCase()}`}>
-                                            {TAG_LABELS[t]}
-                                          </span>
-                                        ))}
-                                      </span>
-                                    </span>
-                                    <Photo src={product.imageUrl} name={name} seed={product.productId} />
-                                  </button>
-                                  {addable ? (
-                                    <button
-                                      type="button"
-                                      className={`card__add ${qty ? 'has-qty' : ''}`}
-                                      lang="en"
-                                      aria-label={product.hasModifier ? `Choose options for ${name}` : `Add ${name} to your cart${qty ? `, ${qty} already added` : ''}`}
-                                      onClick={(e) => quickAdd(product, e.currentTarget.parentElement?.querySelector('.photo') ?? null)}
-                                    >
-                                      {qty ? <span key={qty} className="card__qty">{qty}</span> : <PlusIcon width={18} height={18} />}
-                                    </button>
-                                  ) : null}
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        </section>
-                      );
-                    })
+                    categories
+                      .slice(0, mounted)
+                      .map((category) => (
+                        <MenuSection
+                          key={category.id}
+                          category={category}
+                          menuServing={menuServing}
+                          priceType={priceType}
+                          inCart={inCart}
+                          onOpen={openProduct}
+                          onQuickAdd={quickAdd}
+                        />
+                      ))
                   )}
                   {!menuLoading && !menuError && activeMenu && !categories.length ? (
                     <section className="state-page state-page--inline">
@@ -605,7 +572,7 @@ export default function Storefront() {
       ) : null}
 
       <footer className="footer">
-        {s?.bannerUrl && !isWide ? (
+        {s?.bannerUrl && !isWide && !orderId ? (
           <div className="footer__media" ref={footerMediaRef}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             {footerNear ? <img src={s.bannerUrl} alt="" decoding="async" /> : null}

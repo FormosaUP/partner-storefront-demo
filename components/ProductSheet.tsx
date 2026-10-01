@@ -46,6 +46,7 @@ export default function ProductSheet({ product, open, orderable, blockedReason, 
   const options = useResource(
     product && open && needsOptions ? `mods:${product.productId}:${product.storeMenuCategoryId}:${lang}` : null,
     (signal) => api.modifiers(product!.productId, product!.storeMenuCategoryId, lang, signal),
+    true,
   );
 
   useEffect(() => {

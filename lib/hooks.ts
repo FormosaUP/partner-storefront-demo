@@ -12,8 +12,22 @@ export interface Resource<T> {
 
 const toApiError = (e: unknown) => (isApiError(e) ? e : new ApiError('api', 0, null, 'Unexpected error'));
 
+const resourceCache = new Map<string, unknown>();
+const prefetching = new Set<string>();
+
+// Warms the cache for a key the visitor is about to ask for, e.g. a menu tab under their finger.
+export function prefetchResource<T>(key: string, loader: (signal?: AbortSignal) => Promise<T>) {
+  if (resourceCache.has(key) || prefetching.has(key)) return;
+  prefetching.add(key);
+  loader()
+    .then((data) => resourceCache.set(key, data))
+    .catch(() => undefined)
+    .finally(() => prefetching.delete(key));
+}
+
 // Loads once per key. Retries on its own after a rate limit, and when the connection comes back.
-export function useResource<T>(key: string | null, loader: (signal: AbortSignal) => Promise<T>): Resource<T> {
+// With `cached`, a key seen before is served from memory at once and refreshed in the background.
+export function useResource<T>(key: string | null, loader: (signal: AbortSignal) => Promise<T>, cached = false): Resource<T> {
   const [state, setState] = useState<{ key: string | null; data: T | null; error: ApiError | null; loading: boolean }>({
     key: null,
     data: null,
@@ -33,11 +47,14 @@ export function useResource<T>(key: string | null, loader: (signal: AbortSignal)
 
     loaderRef
       .current(controller.signal)
-      .then((data) => setState({ key, data, error: null, loading: false }))
+      .then((data) => {
+        if (cached) resourceCache.set(key, data);
+        setState({ key, data, error: null, loading: false });
+      })
       .catch((e) => {
         if (isAbort(e)) return;
         const error = toApiError(e);
-        setState((s) => ({ key, data: s.key === key ? s.data : null, error, loading: false }));
+        setState((s) => ({ key, data: s.key === key ? s.data : ((resourceCache.get(key) as T | undefined) ?? null), error, loading: false }));
         if (error.kind === 'rate_limited') timer = setTimeout(retry, error.retryAfterMs + 300);
         if (error.kind === 'network') window.addEventListener('online', retry, { once: true });
       });
@@ -51,10 +68,11 @@ export function useResource<T>(key: string | null, loader: (signal: AbortSignal)
 
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
   const fresh = state.key === key;
+  const data = fresh ? state.data : key !== null && cached ? ((resourceCache.get(key) as T | undefined) ?? null) : null;
   return {
-    data: fresh ? state.data : null,
+    data,
     error: fresh ? state.error : null,
-    loading: key !== null && (state.loading || !fresh),
+    loading: key !== null && data === null && (state.loading || !fresh),
     reload,
   };
 }
@@ -158,20 +176,20 @@ export const prefersReducedMotion = () =>
   typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // True once the element has come within reach of the viewport. Used to hold back heavy photos.
-export function useNearViewport<T extends Element>(margin = '500px') {
-  const ref = useRef<T>(null);
+// Takes a callback ref so it also works for elements that mount after the first render.
+export function useNearViewport<T extends Element>(margin = '350px') {
+  const [element, setElement] = useState<T | null>(null);
   const [near, setNear] = useState(false);
   useEffect(() => {
-    const el = ref.current;
-    if (!el || near) return;
+    if (!element || near) return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) setNear(true);
       },
       { rootMargin: margin },
     );
-    observer.observe(el);
+    observer.observe(element);
     return () => observer.disconnect();
-  }, [near, margin]);
-  return [ref, near] as const;
+  }, [element, near, margin]);
+  return [setElement, near] as const;
 }

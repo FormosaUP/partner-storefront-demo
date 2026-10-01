@@ -55,7 +55,7 @@ export default function CartPanel(props: Props) {
   const formId = useId();
   const [step, setStep] = useState<'cart' | 'checkout'>('cart');
   const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [phone, setPhone] = useState('+1 ');
   const [orderNote, setOrderNote] = useState('');
   const [sms, setSms] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<{ name?: string; phone?: string }>({});
@@ -123,10 +123,14 @@ export default function CartPanel(props: Props) {
     e.preventDefault();
     if (placing || !paymentOption || !settings) return;
     const cleanName = name.trim();
-    const cleanPhone = phone.replace(/[\s().-]/g, '');
+    const digits = phone.replace(/[\s().-]/g, '');
+    // A number typed without a country code is taken as a US number.
+    const cleanPhone = digits.startsWith('+') ? digits : `+1${digits}`;
     const errors: { name?: string; phone?: string } = {};
     if (!cleanName) errors.name = 'Tell us who is picking up.';
-    if (!/^\+?\d{7,15}$/.test(cleanPhone)) errors.phone = 'Enter a phone number we can reach you on, digits only.';
+    if (cleanPhone.startsWith('+1') ? !/^\+1\d{10}$/.test(cleanPhone) : !/^\+\d{8,15}$/.test(cleanPhone)) {
+      errors.phone = cleanPhone.startsWith('+1') ? 'Enter the 10-digit number after +1.' : 'Enter the full number, starting with + and the country code.';
+    }
     setFieldErrors(errors);
     setFormError(null);
     setUncertain(null);
@@ -454,7 +458,7 @@ export default function CartPanel(props: Props) {
                 required
               />
               <p className="field__hint" id={`${formId}-phone-hint`}>
-                The kitchen uses it to find your order, and your confirmation is sent to it.
+                Starts with the country code, +1 for the US. The kitchen uses it to find your order, and your confirmation is sent to it.
               </p>
               {fieldErrors.phone ? (
                 <p className="field__error" id={`${formId}-phone-err`}>
