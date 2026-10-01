@@ -1,3 +1,5 @@
+import Storefront from '@/components/Storefront';
+
 export default function Page() {
-  return <main>Opening soon.</main>;
+  return <Storefront />;
 }
