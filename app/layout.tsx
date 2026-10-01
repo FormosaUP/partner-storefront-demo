@@ -7,7 +7,7 @@ const display = Fraunces({
   subsets: ['latin'],
   style: ['normal', 'italic'],
   variable: '--font-display',
-  display: 'swap',
+  display: 'optional',
 });
 
 const ui = Instrument_Sans({
