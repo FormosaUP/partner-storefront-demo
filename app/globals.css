@@ -152,8 +152,8 @@ h2:focus,
 .skel {
   display: block;
   border-radius: 8px;
-  background: linear-gradient(100deg, var(--paper-2) 30%, #f8f4ec 50%, var(--paper-2) 70%) 0 0 / 300% 100%;
-  animation: shimmer 1.6s linear infinite;
+  background: var(--paper-2);
+  animation: shimmer 1.1s ease-in-out infinite alternate;
 }
 
 .skel--line {
@@ -200,7 +200,7 @@ h2:focus,
 
 @keyframes shimmer {
   to {
-    background-position: -150% 0;
+    opacity: 0.45;
   }
 }
 
@@ -265,8 +265,7 @@ h2:focus,
   justify-content: space-between;
   gap: 12px;
   padding: 0 16px;
-  background: rgb(246 241 231 / 0.92);
-  backdrop-filter: saturate(1.4) blur(12px);
+  background: var(--paper);
   border-bottom: 1px solid var(--line);
 }
 
@@ -772,8 +771,7 @@ main {
   position: sticky;
   top: var(--topbar);
   z-index: 30;
-  background: rgb(246 241 231 / 0.94);
-  backdrop-filter: blur(10px);
+  background: var(--paper);
   border-bottom: 1px solid var(--line);
   overflow-x: auto;
   scrollbar-width: none;
