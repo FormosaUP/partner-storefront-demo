@@ -210,12 +210,12 @@ export default function CartPanel(props: Props) {
   const header = (
     <header className="cart__head">
       {step === 'checkout' ? (
-        <button type="button" className="icon-btn" onClick={() => goto('cart')} aria-label="Back to your order">
+        <button type="button" className="icon-btn" onClick={() => goto('cart')} aria-label="Back to your cart">
           <BackIcon />
         </button>
       ) : null}
       <h2 id={titleId} ref={headingRef} tabIndex={-1}>
-        {step === 'cart' ? 'Your order' : 'Pickup details'}
+        {step === 'cart' ? 'Your cart' : 'Pickup details'}
       </h2>
       {step === 'cart' && count ? <span className="cart__count">{count} {count === 1 ? 'item' : 'items'}</span> : null}
       {onClose ? (
@@ -228,9 +228,9 @@ export default function CartPanel(props: Props) {
 
   if (props.loadingShell) {
     return (
-      <section className="cart" aria-busy="true" aria-label="Your order">
+      <section className="cart" aria-busy="true" aria-label="Your cart">
         <header className="cart__head">
-          <h2 id={titleId}>Your order</h2>
+          <h2 id={titleId}>Your cart</h2>
         </header>
         <div className="cart__skeleton">
           <span className="skel skel--line" style={{ width: '70%' }} />
@@ -249,7 +249,7 @@ export default function CartPanel(props: Props) {
             <BagIcon width={28} height={28} />
           </span>
           <p className="cart__empty-title">Nothing here yet</p>
-          <p>Tap the plus on any dish and it will land on this ticket.</p>
+          <p>Tap the plus on any dish and it will land in your cart.</p>
           {onClose ? (
             <button type="button" className="btn btn--ghost" onClick={onClose}>
               Browse the menu
@@ -304,7 +304,7 @@ export default function CartPanel(props: Props) {
             {quoteError.kind === 'rate_limited'
               ? `Pricing will resume in ${limitedSeconds || 'a few'} seconds.`
               : quoteError.kind === 'network'
-                ? 'We could not price your order. Check your connection.'
+                ? 'We could not price your cart. Check your connection.'
                 : quoteError.validationErrors[0]?.errorMessage ?? `We could not price this order${quoteError.code ? ` (${quoteError.code})` : ''}.`}
           </p>
           {quoteError.kind !== 'rate_limited' ? (
@@ -314,7 +314,7 @@ export default function CartPanel(props: Props) {
           ) : null}
         </div>
       ) : (
-        <div className="totals__skeleton" aria-label="Pricing your order">
+        <div className="totals__skeleton" aria-label="Pricing your cart">
           <span className="skel skel--line" />
           <span className="skel skel--line skel--strong" />
         </div>
@@ -349,7 +349,7 @@ export default function CartPanel(props: Props) {
             </a>
           ) : null}
           <button type="button" className="btn btn--ghost" onClick={() => setUncertain(null)}>
-            Back to my order
+            Back to my cart
           </button>
         </div>
       </section>

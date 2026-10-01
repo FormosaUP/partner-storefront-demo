@@ -162,7 +162,7 @@ export default function Storefront() {
 
   const addLine = useCallback((line: CartLine, source: Element | null) => {
     cart.add(line);
-    setAnnouncement(`Added ${line.quantity} ${line.name} to your order.`);
+    setAnnouncement(`Added ${line.quantity} ${line.name} to your cart.`);
     requestAnimationFrame(() => flyToCart(source));
   }, []);
 
@@ -239,7 +239,7 @@ export default function Storefront() {
       </a>
 
       <div className="banners" aria-live="polite">
-        {!online ? <p className="banner banner--offline">You’re offline. Your order is kept on this phone until you’re back.</p> : null}
+        {!online ? <p className="banner banner--offline">You’re offline. Your cart is kept on this phone until you’re back.</p> : null}
         {limitedSeconds > 0 ? (
           <p className="banner banner--limit">
             <ClockIcon width={16} height={16} />
@@ -294,7 +294,7 @@ export default function Storefront() {
             </label>
           ) : null}
           {!orderId ? (
-            <button type="button" className="topbar__cart" data-cart-target onClick={() => setCartOpen(true)} aria-label={`Your order, ${count} ${count === 1 ? 'item' : 'items'}`}>
+            <button type="button" className="topbar__cart" data-cart-target onClick={() => setCartOpen(true)} aria-label={`Your cart, ${count} ${count === 1 ? 'item' : 'items'}`}>
               <BagIcon />
               {count ? <span className="badge">{count}</span> : null}
             </button>
@@ -543,7 +543,7 @@ export default function Storefront() {
                                       type="button"
                                       className={`card__add ${qty ? 'has-qty' : ''}`}
                                       lang="en"
-                                      aria-label={product.hasModifier ? `Choose options for ${name}` : `Add ${name} to your order${qty ? `, ${qty} already added` : ''}`}
+                                      aria-label={product.hasModifier ? `Choose options for ${name}` : `Add ${name} to your cart${qty ? `, ${qty} already added` : ''}`}
                                       onClick={(e) => quickAdd(product, e.currentTarget.parentElement?.querySelector('.photo') ?? null)}
                                     >
                                       {qty ? <span key={qty} className="card__qty">{qty}</span> : <PlusIcon width={18} height={18} />}
@@ -569,7 +569,7 @@ export default function Storefront() {
             )}
           </main>
 
-          <aside className="cart-col" aria-label="Your order" data-cart-target>
+          <aside className="cart-col" aria-label="Your cart" data-cart-target>
             {isDesktop ? cartPanel() : null}
           </aside>
         </div>
@@ -580,7 +580,7 @@ export default function Storefront() {
           {count > 0 ? (
             <button type="button" className="cart-bar" onClick={() => setCartOpen(true)} data-cart-target>
               <span className="cart-bar__count">{count}</span>
-              <span className="cart-bar__label">View your order</span>
+              <span className="cart-bar__label">View your cart</span>
               <span className={`cart-bar__total ${quoteState.loading ? 'is-updating' : ''}`}>{total !== null ? formatMoney(total) : ''}</span>
             </button>
           ) : null}

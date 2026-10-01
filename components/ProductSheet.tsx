@@ -272,7 +272,7 @@ export default function ProductSheet({ product, open, orderable, blockedReason, 
             <>
               <Stepper value={quantity} onChange={setQuantity} label="Quantity" />
               <button type="button" className="btn btn--primary btn--grow" onClick={submit} disabled={!optionsReady}>
-                <span>Add to order</span>
+                <span>Add to cart</span>
                 <span className="btn__amount">{formatMoney(unitPrice * quantity)}</span>
               </button>
             </>
