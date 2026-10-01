@@ -4,15 +4,14 @@ import type { ReactNode } from 'react';
 import './globals.css';
 
 const display = Fraunces({
-  subsets: ['latin', 'latin-ext', 'vietnamese'],
-  axes: ['opsz'],
+  subsets: ['latin'],
   style: ['normal', 'italic'],
   variable: '--font-display',
   display: 'swap',
 });
 
 const ui = Instrument_Sans({
-  subsets: ['latin', 'latin-ext'],
+  subsets: ['latin'],
   variable: '--font-ui',
   display: 'swap',
 });

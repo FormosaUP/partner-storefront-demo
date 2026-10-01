@@ -2,7 +2,7 @@
 // With --local, the Pages URL is served from ./out so unpublished builds can be checked on the real origin.
 // Usage: node tools/shot.mjs [--local] [--out temp/shots] [scenario ...]
 import { chromium, devices } from 'playwright';
-import { readFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { extname, join } from 'node:path';
 
 const PAGE = 'https://formosaup.github.io/partner-storefront-demo/';
@@ -186,6 +186,44 @@ Object.assign(scenarios, {
     await shot(page, `${kind}-ticket`);
   },
 });
+
+// Places ONE real order (phone run), then shows the same order on desktop.
+scenarios.live = async (page, kind) => {
+  const idFile = 'temp/order-id.txt';
+  page.on('response', async (r) => {
+    if (!r.url().includes('/api/v1/')) return;
+    const path = r.url().split('/partner')[1];
+    let body = '';
+    if (path.includes('/Order') && !path.includes('Preview')) body = (await r.text().catch(() => '')).slice(0, 1500);
+    console.log('  api', r.request().method(), path, r.status(), body);
+  });
+  if (kind === 'phone') {
+    await loaded(page);
+    await addOne(page);
+    await openCart(page, kind);
+    await page.locator('.cart__foot .btn--primary').click();
+    await page.locator('input[autocomplete="name"]').fill('Docs Test');
+    await page.locator('input[type="tel"]').fill('2125550123');
+    await settle(page, 400);
+    await shot(page, 'phone-live-checkout');
+    await page.locator('.cart__foot .btn--primary').click();
+    await page.waitForSelector('.ticket__number, .cart__uncertain, .notice--error', { timeout: 30000 });
+    await settle(page, 2500);
+    await shot(page, 'phone-live-ticket');
+    const id = new URL(page.url()).searchParams.get('order');
+    console.log('  order id', id);
+    if (id) writeFileSync(idFile, id);
+    await page.evaluate(() => window.scrollTo(0, 600));
+    await settle(page, 600);
+    await shot(page, 'phone-live-ticket-2');
+  } else {
+    const id = readFileSync(idFile, 'utf8').trim();
+    await page.goto(PAGE + '?order=' + id);
+    await page.waitForSelector('.ticket__number', { timeout: 30000 });
+    await settle(page, 2500);
+    await shot(page, 'desktop-live-ticket');
+  }
+};
 
 const browser = await chromium.launch();
 for (const name of wanted.length ? wanted : ['home']) {

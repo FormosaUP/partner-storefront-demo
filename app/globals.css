@@ -445,7 +445,6 @@ main {
   font-size: clamp(2.5rem, 11vw, 4.75rem);
   line-height: 0.98;
   letter-spacing: -0.025em;
-  font-optical-sizing: auto;
 }
 
 .hero h1 em {
@@ -816,6 +815,8 @@ main {
 
 .section {
   padding-top: 26px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 720px;
 }
 
 .section__head {

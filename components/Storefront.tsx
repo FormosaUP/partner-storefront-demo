@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom';
 import { api, type ApiError } from '@/lib/api';
 import { formatMoney, pickPrice } from '@/lib/format';
-import { prefersReducedMotion, useMedia, useOnline, useQuote, useRateLimitSeconds, useResource } from '@/lib/hooks';
+import { prefersReducedMotion, useMedia, useNearViewport, useOnline, useQuote, useRateLimitSeconds, useResource } from '@/lib/hooks';
 import { cart, hydrateStore, lineKey, prefs, useStore, type CartLine } from '@/lib/store';
 import type { MenuProduct, PaymentOption, PriceType, StoreSettings } from '@/lib/types';
 import CartPanel from './CartPanel';
@@ -58,6 +58,7 @@ export default function Storefront() {
   const limitedSeconds = useRateLimitSeconds();
   const cartTitleId = useId();
   const chipsRef = useRef<HTMLDivElement>(null);
+  const [footerMediaRef, footerNear] = useNearViewport<HTMLDivElement>('200px');
   const lang = store.lang;
 
   useEffect(() => {
@@ -583,9 +584,9 @@ export default function Storefront() {
 
       <footer className="footer">
         {s?.bannerUrl && !isDesktop ? (
-          <div className="footer__media">
+          <div className="footer__media" ref={footerMediaRef}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={s.bannerUrl} alt="" loading="lazy" decoding="async" />
+            {footerNear ? <img src={s.bannerUrl} alt="" decoding="async" /> : null}
           </div>
         ) : null}
         <p className="footer__brand">{brand}</p>

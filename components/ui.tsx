@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode, type SVGProps } from 'react';
 import { firstGlyph, hashHue } from '@/lib/format';
-import { prefersReducedMotion } from '@/lib/hooks';
+import { prefersReducedMotion, useNearViewport } from '@/lib/hooks';
 
 type IconProps = SVGProps<SVGSVGElement>;
 
@@ -94,6 +94,8 @@ export function Photo({ src, name, seed, alt = '', eager, className = '', onNatu
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const ref = useRef<HTMLImageElement>(null);
+  const [frameRef, near] = useNearViewport<HTMLSpanElement>();
+  const show = eager || near;
 
   useEffect(() => {
     setFailed(false);
@@ -104,7 +106,7 @@ export function Photo({ src, name, seed, alt = '', eager, className = '', onNatu
       onNaturalSize?.(img.naturalWidth, img.naturalHeight);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [src]);
+  }, [src, show]);
 
   if (!src || failed) {
     return (
@@ -116,13 +118,14 @@ export function Photo({ src, name, seed, alt = '', eager, className = '', onNatu
     );
   }
   return (
-    <span className={`photo ${loaded ? 'is-loaded' : ''} ${className}`}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
+    <span ref={frameRef} className={`photo ${loaded ? 'is-loaded' : ''} ${className}`}>
+      {/* The API offers one full-size file per photo, so each is held back until it is nearly on screen. */}
+      {show ? (
+      // eslint-disable-next-line @next/next/no-img-element
       <img
         ref={ref}
         src={src}
         alt={alt}
-        loading={eager ? 'eager' : 'lazy'}
         decoding="async"
         onLoad={(e) => {
           setLoaded(true);
@@ -130,6 +133,7 @@ export function Photo({ src, name, seed, alt = '', eager, className = '', onNatu
         }}
         onError={() => setFailed(true)}
       />
+      ) : null}
     </span>
   );
 }
