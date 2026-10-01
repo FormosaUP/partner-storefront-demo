@@ -1,13 +1,14 @@
 import type { Metadata, Viewport } from 'next';
 import { Fraunces, Instrument_Sans } from 'next/font/google';
 import type { ReactNode } from 'react';
+import './headline-font.css';
 import './globals.css';
 
 const display = Fraunces({
   subsets: ['latin'],
   style: ['normal', 'italic'],
   variable: '--font-display',
-  display: 'optional',
+  display: 'swap',
 });
 
 const ui = Instrument_Sans({

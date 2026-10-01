@@ -440,9 +440,9 @@ main {
 
 .hero h1 {
   margin-top: 14px;
-  font-family: var(--display);
+  font-family: 'Fraunces Headline', var(--display);
   font-weight: 500;
-  font-size: clamp(2.5rem, 11vw, 4.75rem);
+  font-size: clamp(2.75rem, 12.6vw, 5rem);
   line-height: 0.98;
   letter-spacing: -0.025em;
 }
