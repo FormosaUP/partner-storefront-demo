@@ -2384,7 +2384,8 @@ dl.totals > div {
   .hero__media {
     display: block;
     position: relative;
-    min-height: 300px;
+    align-self: center;
+    aspect-ratio: 16 / 9;
     border-radius: 28px 28px 28px 4px;
     overflow: hidden;
     background: var(--celadon-soft);

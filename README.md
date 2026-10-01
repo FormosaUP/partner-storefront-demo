@@ -48,11 +48,11 @@ Other calls made outside normal page use: read-only probes of the catalogue and 
 | Delivery, accounts, loyalty, cancellation | Out of scope per the documentation. |
 | A real `429` | Not provoked on purpose. The rate-limit state was verified with a mocked response only. |
 | Interface language | Menu content follows the chosen store language; the interface text itself is English only. |
-| Banner on phones | Shown from tablet width up only. The single file on offer is 5760px wide and did not decode on a test phone. |
+| Banner on phones | Shown from tablet width up only. The store's original banner was 5760px wide and did not decode on a test phone; phones go straight to the menu. |
 
 ## Design decisions
 
-**Starting point.** The store's assets are a corgi logo, a banner of a grey cat on a celadon table, five menus from different kitchens, and photography that ranges from 2,000px studio shots to 150px thumbnails with price stickers. The design had to give that mix one voice.
+**Starting point.** The store's original assets were a corgi logo, a banner of a grey cat on a celadon table, five menus from different kitchens, and photography that ranges from 2,000px studio shots to 150px thumbnails with price stickers. The design had to give that mix one voice.
 
 - **Palette.** Sampled from the store's own images: corgi amber and a deeper persimmon for actions, celadon and slate from the banner, on warm paper with brown-black ink. Paper rather than white, so photos with white backgrounds still read as framed. Text pairs meet WCAG AA and form-control borders meet 3:1.
 - **Type.** Fraunces (display, prices, numbers) with Instrument Sans (interface). Chinese, Japanese and Arabic content falls back to the system's native faces instead of shipping megabytes of web font. The hero headline uses the high-contrast display cut of Fraunces, subset to its own letters (6KB) and inlined, so it paints in its final face with the first frame.
@@ -60,6 +60,7 @@ Other calls made outside normal page use: read-only probes of the catalogue and 
 - **Layout.** Phone first: one column, the photo and add button under the right thumb, a sticky section bar, and a bottom bar for the cart. Tablet: two-column hero with the banner, card grid, cart as a side drawer. Desktop: three working columns (section rail, menu, a persistent ticket), not a stretched phone.
 - **Photography.** Photos are the largest thing on every card. A dish with no photo, or a broken one, gets a tinted tile carrying its first character. In the dish dialog, a low-resolution photo is shown as a small framed print instead of being stretched.
 - **Motion.** Each animation reports something: a photo flies into the cart and the cart bumps (from the dish dialog the cart just bumps); the plus button turns into the quantity; option checkmarks draw themselves and the "Required" pill turns into a tick; a missed required group shakes; the ticket prints and is stamped. Skeletons reserve the space of the content they stand in for (measured layout shift 0.003). `prefers-reduced-motion` removes the motion.
+- **Store assets.** Late in the work the store's logo and banner were replaced, through the store's own back office, with files made for this design: a persimmon "up" roundel (`brand/logo.png`) and a 1600 by 900 collage of the store's own dish photos (`brand/banner.jpg`, 238KB). `tools/brand.mjs` regenerates them. The palette keeps its origin in the first assets.
 - **Wordmark.** The API returns no store name, so the wordmark is the `subdomain` value exactly as returned (`up-burger`).
 - **Accessibility.** Native `<dialog>` for focus trapping and Escape, real radio and checkbox inputs for options, labelled fields with inline errors, a skip link, visible focus rings, status announcements for cart changes, cart totals and order progress, and `lang` on store content.
 
@@ -70,7 +71,7 @@ Other calls made outside normal page use: read-only probes of the catalogue and 
 | Mobile, three runs | 95, 96, 99 | 100 | 100 | 2.1 to 2.7 s | 0.003 |
 | Desktop, one run | 82 | 100 | 100 | 3.1 s | 0.002 |
 
-- The desktop score is held down by the store banner: it is the largest element, 1.3MB, and its address is only known after the settings call.
+- The desktop score was measured with the store's original banner (1.3MB, 5760px). After the store's logo and banner were replaced with lighter files (see below), desktop measured 80 with LCP 2.5 s; what holds it down now is the full-size dish photos, three columns of them.
 - Headless Chrome on the test machine scored 79 to 95 on mobile because it showed a blank first frame for about 2.5 seconds. Real Chrome paints at 0.3 to 0.65 seconds. This looks like a headless artifact but is not explained.
 - Interaction, measured with 4x CPU throttling: switching to a menu already seen shows its dishes in the next frame (25 to 41 ms); a menu not seen before takes one request (about 130 to 170 ms); adding to the cart shows the count in about 100 ms.
 
@@ -92,7 +93,7 @@ Everything below is a place where the documentation was missing, ambiguous or wr
 
 ### Missing
 
-8. **Store name.** `Store/Settings` has no display name. Only `subdomain` is available.
+8. **Store name.** `Store/Settings` has no display name. Only `subdomain` is available. The store does have one (the back office shows "up burger"); the partner API just does not return it.
 9. **Currency.** No currency code anywhere. The address is in New York while prices look like New Taiwan dollars. The site shows a bare `$`.
 10. **Cash price and card price.** Nothing explains `cashPrice` / `cardPrice`, `defaultPriceType`, `adjustPercentage`, or what `priceType` to send to `POST Order`. I show the default type, send `defaultPriceType`, and show the other total as "if you pay in cash".
 11. **Opening hours.** `openHours` has no description: weekday keys, time format, time zone, and what `00:00:00` to `00:00:00` means (the store returns it for five days).
