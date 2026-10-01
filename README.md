@@ -11,6 +11,7 @@ A static, frontend-only ordering site built on the uLite Online Order Partner AP
 ![Desktop cart and order ticket](docs/screens/desktop-2.png)
 ![Designed states: loading, closed, sold out and no photo, unpublished, network failure, rate limited, unconfirmed order](docs/screens/states.png)
 ![Tablet, 768px](docs/screens/tablet-768.png)
+![Online payment: checkout, back from the payment page, switched to pay at pickup](docs/screens/online-payment.png)
 
 ## What works end to end
 
@@ -134,6 +135,7 @@ A static, frontend-only ordering site built on the uLite Online Order Partner AP
 ![Desktop cart and order ticket](docs/screens/desktop-2.png)
 ![Designed states: loading, closed, sold out and no photo, unpublished, network failure, rate limited, unconfirmed order](docs/screens/states.png)
 ![Tablet, 768px](docs/screens/tablet-768.png)
+![Online payment: checkout, back from the payment page, switched to pay at pickup](docs/screens/online-payment.png)
 
 ## Development
 
