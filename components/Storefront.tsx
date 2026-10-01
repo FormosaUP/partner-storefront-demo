@@ -53,6 +53,7 @@ export default function Storefront() {
   const [paymentChoice, setPaymentChoice] = useState<PaymentOption | null>(null);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
+  const [mounted, setMounted] = useState(2);
   const isDesktop = useMedia('(min-width: 1100px)');
   const online = useOnline();
   const limitedSeconds = useRateLimitSeconds();
@@ -108,10 +109,28 @@ export default function Storefront() {
     return map;
   }, [store.lines]);
 
+  useEffect(() => {
+    setMounted(2);
+    if (categories.length <= 2) return;
+    let handle = 0;
+    // Safari has no requestIdleCallback, so a short timer stands in for it there.
+    const hasIdle = typeof window.requestIdleCallback === 'function';
+    const idle = (fn: () => void): number => (hasIdle ? window.requestIdleCallback(fn, { timeout: 400 }) : setTimeout(fn, 60) as unknown as number);
+    const cancel = (id: number) => (hasIdle ? window.cancelIdleCallback(id) : clearTimeout(id));
+    const step = () => {
+      setMounted((n) => {
+        if (n + 3 < categories.length) handle = idle(step);
+        return n + 3;
+      });
+    };
+    handle = idle(step);
+    return () => cancel(handle);
+  }, [categories]);
+
   // Highlight the section currently under the sticky header.
   useEffect(() => {
     if (!categories.length) return;
-    setActiveCategory(categories[0].id);
+    setActiveCategory((current) => (categories.some((c) => c.id === current) ? current : categories[0].id));
     const observer = new IntersectionObserver(
       (entries) => {
         const visible = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
@@ -121,7 +140,7 @@ export default function Storefront() {
     );
     document.querySelectorAll('[data-category]').forEach((el) => observer.observe(el));
     return () => observer.disconnect();
-  }, [categories]);
+  }, [categories, mounted]);
 
   useEffect(() => {
     const row = chipsRef.current;
@@ -173,6 +192,7 @@ export default function Storefront() {
   };
 
   const jumpTo = (categoryId: string) => {
+    if (!document.getElementById(`cat-${categoryId}`)) flushSync(() => setMounted(categories.length));
     document.getElementById(`cat-${categoryId}`)?.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' });
     setActiveCategory(categoryId);
   };
@@ -473,7 +493,7 @@ export default function Storefront() {
                       </ul>
                     </div>
                   ) : (
-                    categories.map((category) => {
+                    categories.slice(0, mounted).map((category) => {
                       const serving = menuServing && category.isAvailableNow;
                       return (
                         <section key={category.id} id={`cat-${category.id}`} data-category={category.id} className="section" aria-labelledby={`cat-title-${category.id}`}>
