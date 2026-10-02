@@ -12,6 +12,7 @@ A static, frontend-only ordering site built on the uLite Online Order Partner AP
 ![Designed states: loading, closed, sold out and no photo, unpublished, network failure, rate limited, unconfirmed order](docs/screens/states.png)
 ![Tablet, 768px](docs/screens/tablet-768.png)
 ![Online payment: checkout, back from the payment page, switched to pay at pickup](docs/screens/online-payment.png)
+![Scheduled pickup: choosing a time, checkout, the booked order](docs/screens/scheduled.png)
 
 ## What works end to end
 
@@ -25,22 +26,23 @@ Verified on the deployed page, against the real development store:
 6. Order status page (`GET Order/{orderId}`), polling every 20 seconds while the order is open and the tab is visible, and retrying with back-off after errors.
 7. Payment options taken from the store settings. The store offered `PAY_IN_STORE` only at first and added `PAY_ONLINE` during the work; both are supported.
 8. Online payment up to the hosted payment page: `POST Order`, `POST Transaction/Initial`, top-level navigation to the payment link, Back to the order page, and switching the unpaid order to pay at pickup with `PATCH Order/{orderId}`.
+9. Scheduled pickup: as soon as possible or a later time, offered from `schedulableWindows` in half-hour steps and sent as `scheduledTime`. Menus are re-read for the chosen time, a time that has passed is replaced, and the order page shows the pickup time from `estimateTime`.
 
-Real orders placed: **2**.
+Real orders placed: **3**.
 
 - `ORD-1`: one item, pay at pickup.
 - `ORD-4`: one item, pay online. Stopped at the payment page (no card was entered), then switched to pay at pickup.
+- `ORD-1` of the following day (the serial restarts daily): one item, scheduled for the next morning at 9:30, pay at pickup. Read back with `lifecycleStatus: SCHEDULED` and `estimateTime` equal to the chosen time.
 
 Both used SMS updates off and the phone number `+1 212 555 0123` from the reserved fictional range.
 
-Other calls made outside normal page use: read-only probes of the catalogue and modifiers, and four quotes sent by script to learn response shapes (including how a phone number is read).
+Other calls made outside normal page use: read-only probes of the catalogue and modifiers, and seven quotes sent by script to learn response shapes (how a phone number and a scheduled time are read).
 
 ## What is not working or was left out
 
 | Item | Why |
 | --- | --- |
 | Completing a card payment | No test card is documented, so no payment was completed. The success return, the "confirming your payment" state and a failed-payment retry are implemented from the documentation but **not exercised**. |
-| Scheduled pickup | The time zone of `schedulableWindows` and `scheduledTime` is not documented. Only "as soon as possible" orders are offered. |
 | Weekly opening hours | The `openHours` format is not documented (see gaps). Only open, closed or paused is shown. |
 | Tips | `TipInfo` is undocumented, and the docs place tips on the online payment call only. |
 | Receipt | `GET Order/{orderId}/Receipt` does not say what format it returns. |
@@ -79,7 +81,7 @@ What was done for speed: photos are requested only when about to scroll into vie
 
 ## Documentation gaps
 
-Everything below is a place where the documentation was missing, ambiguous or wrong, or where I had to make a choice it did not cover.
+Everything below is a place where the documentation was missing, ambiguous or wrong, or where I had to make a choice it did not cover. The list describes the documentation as first read on 2026-10-01. The provider has revised it since (error codes, rate limits, timestamps, the payment response, and scheduling), so several items are now addressed at the source.
 
 ### Wrong or contradictory
 
@@ -98,7 +100,7 @@ Everything below is a place where the documentation was missing, ambiguous or wr
 10. **Cash price and card price.** Nothing explains `cashPrice` / `cardPrice`, `defaultPriceType`, `adjustPercentage`, or what `priceType` to send to `POST Order`. I show the default type, send `defaultPriceType`, and show the other total as "if you pay in cash".
 11. **Opening hours.** `openHours` has no description: weekday keys, time format, time zone, and what `00:00:00` to `00:00:00` means (the store returns it for five days).
 12. **Open or closed.** No documented way to tell whether the store is open now. I derive it from `asapAvailable`, `storePaused`, `isOnlinePaused` and `orderTypeOptions`, none of which has a description.
-13. **Scheduling.** `schedulableWindows` and `scheduledTime` are date-times without an offset and no stated time zone. How to ask for "as soon as possible" is not stated; I omit `scheduledTime`.
+13. **Scheduling.** `schedulableWindows` and `scheduledTime` were date-times without an offset and with no stated time zone, and how to ask for "as soon as possible" was not stated. Scheduling was first left out for that reason, then built once the behaviour was confirmed: both are the store's local time, the windows already include preparation time, omitting `scheduledTime` means as soon as possible, and the order's `estimateTime` carries the chosen time. One trap remains worth a warning in the docs: a correctly formed RFC 3339 value with an offset (`2026-10-03T10:00:00-04:00`) is converted to UTC and then treated as local time, so it lands four hours off and is reported as `OUTSIDE_OPEN_HOURS`. Only the offset-less form works.
 14. **Order type.** "Pickup and takeout only", but the enum has `PICK_UP` and `TO_GO` and no guidance. I send `PICK_UP` because the settings list it.
 15. **Which catalogue endpoint.** Three endpoints return the catalogue in three shapes. Only `Menu/{menuId}` returns the `storeMenuCategoryId` that a quote needs, and only it returns tags. `Category/AllWithProducts` returns all menus flattened, with duplicate category names. `Product/Full` has no images.
 16. **Modifier selection.** The quote accepts both `itemIds` and `items[{ itemId, quantity }]` with no guidance. The option's id is called `modifierId` in `Product/Modifiers` but `itemId` in the quote. `allowMultiSelection`, `maxQuantity` and `isModifierSufficient` are undocumented. I send `items` with quantity 1; the quote echoed the selection back correctly.
@@ -113,7 +115,7 @@ Everything below is a place where the documentation was missing, ambiguous or wr
 25. **Tips.** `tip.isEnabled` is true, `EstimateTip` and `TipInfo` exist, but no field is described, and nothing says how tips work for pay in store.
 26. **Receipt.** Declared as `application/json` containing a binary string.
 27. **Images.** No sizes, formats or resizing parameters. The banner is 5760 by 3298 (1.3MB); product photos range from 153px to 2242px wide.
-28. **Query parameters.** `scheduledTime` and `name` on the menu endpoints have no description.
+28. **Query parameters.** `scheduledTime` and `name` on the menu endpoints had no description. `scheduledTime` turns out to re-judge `isAvailableNow` for that time; `name` is still unexplained and unused here.
 29. **Development server.** The docs list production and staging only.
 30. **`Transaction/Initial` response.** The guide says it "carries a `transactionId`" to keep for `Transaction/Status`. The real response is `{ code, paymentLinkUrl }` with no `transactionId`, so `Transaction/Status` cannot be called from what this endpoint returns. The site reads payment attempts from `transaction[]` on `GET Order/{orderId}` instead.
 31. **When `PATCH` is allowed.** After `Transaction/Initial` had issued a payment link and the customer backed out, `PATCH` to `PAY_IN_STORE` succeeded. Whether an issued link counts as "a transaction attached" is not stated (see also item 5).
@@ -136,7 +138,6 @@ A static, frontend-only ordering site built on the uLite Online Order Partner AP
 ![Desktop cart and order ticket](docs/screens/desktop-2.png)
 ![Designed states: loading, closed, sold out and no photo, unpublished, network failure, rate limited, unconfirmed order](docs/screens/states.png)
 ![Tablet, 768px](docs/screens/tablet-768.png)
-![Online payment: checkout, back from the payment page, switched to pay at pickup](docs/screens/online-payment.png)
 
 ## Development
 
