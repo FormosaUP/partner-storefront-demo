@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, isAbort, isApiError, isSafePaymentUrl, retryDelay } from '@/lib/api';
 import { formatMoney } from '@/lib/format';
-import { describeTime } from '@/lib/schedule';
+import { describeEpoch, describeTime } from '@/lib/schedule';
 import { prefs } from '@/lib/store';
 import type { FulfillmentStatus, OrderDetail, PaymentOption, StoreSettings } from '@/lib/types';
 import { CheckIcon, ClockIcon, PhoneIcon, PinIcon } from './ui';
@@ -179,9 +179,13 @@ export default function OrderView({ orderId, settings, paymentOptions, lang, con
   const useCash = order.priceType === 'CASH_PRICE';
   const number = order.orderSerialNumber ?? order.shortId ?? '';
   const awaitingPayment = order.checkoutType === 'PAY_ONLINE' && order.orderStatusLabel === 'UNPAID' && !cancelled;
-  // The order itself only says that it is scheduled; the chosen time is what this device remembered at checkout.
+  // The pickup time comes from the order's `estimateTime`; what this device remembered at checkout is the fallback.
   const scheduled = order.lifecycleStatus === 'SCHEDULED' || !!scheduledFor;
-  const pickupAt = scheduledFor ? describeTime(scheduledFor, settings?.preferredTimezone) : '';
+  const pickupAt = order.estimateTime
+    ? describeEpoch(order.estimateTime, settings?.preferredTimezone)
+    : scheduledFor
+      ? describeTime(scheduledFor, settings?.preferredTimezone)
+      : '';
   // The order's own transaction list is the record of payment attempts; the newest one decides what is offered.
   const lastPayment = [...(order.transaction ?? [])].sort((a, b) => b.createDatetime - a.createDatetime)[0] ?? null;
   const paymentInFlight =

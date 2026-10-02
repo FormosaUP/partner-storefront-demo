@@ -232,6 +232,8 @@ export interface OrderDetail {
   pickupName: string | null;
   note: string | null;
   lifecycleStatus: 'ACTIVE' | 'CLOSED' | 'SCHEDULED';
+  // Pickup time in epoch milliseconds: the chosen time for a scheduled order, the expected ready time otherwise.
+  estimateTime: number | null;
   fulfillmentStatus: FulfillmentStatus;
 }
 

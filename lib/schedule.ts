@@ -97,5 +97,8 @@ export function describeTime(value: string, timezone: string | null | undefined,
   return `${dayLabel(Math.floor(ms / DAY_MS) * DAY_MS, today)} at ${timeFormat.format(new Date(ms))}`;
 }
 
+// The same wording for an absolute moment, such as an order's `estimateTime` (Unix epoch milliseconds).
+export const describeEpoch = (epochMs: number, timezone: string | null | undefined) => describeTime(toWall(storeNow(timezone, epochMs)), timezone);
+
 // "New York" from "America/New_York", for the note that times are the shop's own.
 export const timezoneCity = (timezone: string | null | undefined) => (timezone ? (timezone.split('/').pop() ?? '').replace(/_/g, ' ') : '');
