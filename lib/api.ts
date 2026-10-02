@@ -164,15 +164,19 @@ async function request<T>(method: string, path: string, opts: RequestOptions = {
 }
 
 const id = (value: string) => encodeURIComponent(value);
+const at = (scheduledTime?: string | null) => (scheduledTime ? `?scheduledTime=${encodeURIComponent(scheduledTime)}` : '');
 
 export const api = {
   settings: (signal?: AbortSignal) => request<StoreSettings>('GET', '/api/v1/Store/Settings', { signal }),
 
   languages: (signal?: AbortSignal) => request<{ languages: StoreLanguage[] | null }>('GET', '/api/v1/Store/Languages', { signal }),
 
-  menus: (lang?: string | null, signal?: AbortSignal) => request<{ menus: MenuSummary[] | null }>('GET', '/api/v1/Menu', { lang, signal }),
+  // With a scheduled time, availability is judged for that time instead of for now.
+  menus: (lang?: string | null, scheduledTime?: string | null, signal?: AbortSignal) =>
+    request<{ menus: MenuSummary[] | null }>('GET', `/api/v1/Menu${at(scheduledTime)}`, { lang, signal }),
 
-  menu: (menuId: string, lang?: string | null, signal?: AbortSignal) => request<MenuDetail>('GET', `/api/v1/Menu/${id(menuId)}`, { lang, signal }),
+  menu: (menuId: string, lang?: string | null, scheduledTime?: string | null, signal?: AbortSignal) =>
+    request<MenuDetail>('GET', `/api/v1/Menu/${id(menuId)}${at(scheduledTime)}`, { lang, signal }),
 
   modifiers: (productId: string, storeMenuCategoryId: string, lang?: string | null, signal?: AbortSignal) =>
     request<ProductModifiers>('GET', `/api/v1/Product/Modifiers?ProductId=${id(productId)}&StoreMenuCategoryId=${id(storeMenuCategoryId)}`, { lang, signal }),

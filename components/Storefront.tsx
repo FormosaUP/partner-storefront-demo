@@ -5,6 +5,7 @@ import { flushSync } from 'react-dom';
 import { api, isUuid, type ApiError } from '@/lib/api';
 import { formatMoney, pickPrice } from '@/lib/format';
 import { prefersReducedMotion, prefetchResource, useMedia, useOnline, useQuote, useRateLimitSeconds, useResource } from '@/lib/hooks';
+import { buildDays, hasSlot } from '@/lib/schedule';
 import { cart, hydrateStore, lineKey, prefs, useStore, type CartLine } from '@/lib/store';
 import type { MenuProduct, PaymentOption, PriceType, StoreSettings } from '@/lib/types';
 import CartPanel from './CartPanel';
@@ -64,6 +65,8 @@ export default function Storefront() {
   const [mounted, setMounted] = useState(2);
   const [menuShown, setMenuShown] = useState(false);
   const [placing, setPlacing] = useState(false);
+  const [minute, setMinute] = useState(0);
+  const [pickupExpired, setPickupExpired] = useState(false);
   const jumping = useRef(false);
   const settingsAt = useRef(0);
   const isDesktop = useMedia('(min-width: 1100px)');
@@ -99,13 +102,25 @@ export default function Storefront() {
 
   const settings = useResource(ready ? 'settings' : null, (signal) => api.settings(signal));
   const languages = useResource(ready ? 'languages' : null, (signal) => api.languages(signal));
-  const menus = useResource(menuShown ? `menus:${lang}` : null, (signal) => api.menus(lang, signal), true);
+  // A scheduled pickup time changes which menus and sections are on offer, so it is part of what is asked for.
+  const pickupTime = store.pickupTime;
+  const menus = useResource(
+    menuShown ? `menus:${lang}:${pickupTime ?? 'asap'}` : null,
+    (signal) => api.menus(lang, pickupTime, signal),
+    true,
+    `menus:${lang}:`,
+  );
 
   const menuList = useMemo(() => [...(menus.data?.menus ?? [])].sort((a, b) => a.displayOrder - b.displayOrder), [menus.data]);
   const activeMenu = menuList.find((m) => m.id === store.menuId) ?? menuList.find((m) => m.isAvailableNow) ?? menuList[0] ?? null;
   // A returning visitor's last menu starts loading alongside the menu list instead of after it.
   const menuId = activeMenu?.id ?? (!menus.data && !menus.error ? store.menuId : null);
-  const menu = useResource(menuShown && menuId ? `menu:${menuId}:${lang}` : null, (signal) => api.menu(menuId!, lang, signal), true);
+  const menu = useResource(
+    menuShown && menuId ? `menu:${menuId}:${lang}:${pickupTime ?? 'asap'}` : null,
+    (signal) => api.menu(menuId!, lang, pickupTime, signal),
+    true,
+    `menu:${menuId}:${lang}:`,
+  );
   const categories = useMemo(
     () => [...(menu.data?.categories ?? [])].filter((c) => c.products?.length).sort((a, b) => a.displayOrder - b.displayOrder),
     [menu.data],
@@ -117,7 +132,7 @@ export default function Storefront() {
   const paymentOptions = s?.onlinePaymentOptions ?? [];
   const paymentOption = paymentChoice && paymentOptions.includes(paymentChoice) ? paymentChoice : (paymentOptions[0] ?? null);
   const contentLang = lang ?? s?.defaultLanguageCode ?? 'en';
-  const quoteState = useQuote(orderId ? [] : store.lines, paymentOption, lang);
+  const quoteState = useQuote(orderId ? [] : store.lines, paymentOption, lang, pickupTime);
   const count = store.lines.reduce((n, l) => n + l.quantity, 0);
   const brand = s?.subdomain ?? '';
   const fatal = !s && settings.error && settings.error.kind !== 'rate_limited' ? settings.error : null;
@@ -140,6 +155,43 @@ export default function Storefront() {
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [reloadSettings]);
+
+  // Pickup times on offer, rebuilt every minute so a time the store's clock has passed drops out.
+  useEffect(() => {
+    const timer = setInterval(() => setMinute((n) => n + 1), 60000);
+    return () => clearInterval(timer);
+  }, []);
+  const days = useMemo(
+    () => buildDays(s?.allowFutureOrders ? s.schedulableWindows : null, s?.preferredTimezone),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [s, minute],
+  );
+  const asapAvailable = !!s?.asapAvailable;
+  useEffect(() => {
+    if (!s) return;
+    const first = days[0]?.slots[0]?.value ?? null;
+    if (pickupTime && !hasSlot(days, pickupTime)) {
+      // The chosen time has passed or is no longer offered: move to the nearest choice and say so.
+      prefs.setPickupTime(asapAvailable ? null : first);
+      setPickupExpired(true);
+    } else if (!pickupTime && !asapAvailable && first) {
+      // Closed right now but taking orders for later: start from the earliest time.
+      prefs.setPickupTime(first);
+    }
+  }, [s, days, pickupTime, asapAvailable]);
+
+  const schedule = {
+    days,
+    value: pickupTime,
+    onChange: (value: string | null) => {
+      prefs.setPickupTime(value);
+      setPickupExpired(false);
+    },
+    asapAvailable,
+    prepMinutes: s?.defaultPrepTimeMinutes ?? null,
+    timezone: s?.preferredTimezone ?? null,
+    expired: pickupExpired,
+  };
 
   // A remembered language the store no longer offers falls back to the store default.
   const languageCodes = languages.data?.languages;
@@ -219,7 +271,7 @@ export default function Storefront() {
     setSheetOpen(true);
   }, []);
 
-  const warmMenu = (id: string) => prefetchResource(`menu:${id}:${lang}`, () => api.menu(id, lang));
+  const warmMenu = (id: string) => prefetchResource(`menu:${id}:${lang}:${pickupTime ?? 'asap'}`, () => api.menu(id, lang, pickupTime));
 
   const menuServing = activeMenu?.isAvailableNow ?? true;
 
@@ -284,6 +336,7 @@ export default function Storefront() {
       onPaymentOption={setPaymentChoice}
       unavailable={orderingUnavailable}
       unconfirmedAt={store.unconfirmedAt}
+      schedule={schedule}
       onBusy={setPlacing}
       lang={lang}
       contentLang={contentLang}
@@ -380,6 +433,7 @@ export default function Storefront() {
             paymentOptions={paymentOptions}
             lang={lang}
             contentLang={contentLang}
+            scheduledFor={store.recent.find((r) => r.orderId === orderId)?.scheduledFor ?? null}
             onNewOrder={() => go(null)}
           />
         </main>
@@ -497,7 +551,9 @@ export default function Storefront() {
               <>
                 {state && state.kind !== 'open' ? (
                   <p className={`notice notice--store notice--${state.kind}`} role="status">
-                    {state.reason}
+                    {state.kind === 'closed' && days.length
+                      ? 'We are closed right now, but you can order ahead: choose a pickup time in your cart.'
+                      : state.reason}
                   </p>
                 ) : null}
 

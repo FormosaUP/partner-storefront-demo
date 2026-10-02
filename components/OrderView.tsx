@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, isAbort, isApiError, isSafePaymentUrl, retryDelay } from '@/lib/api';
 import { formatMoney } from '@/lib/format';
+import { describeTime } from '@/lib/schedule';
 import { prefs } from '@/lib/store';
 import type { FulfillmentStatus, OrderDetail, PaymentOption, StoreSettings } from '@/lib/types';
 import { CheckIcon, ClockIcon, PhoneIcon, PinIcon } from './ui';
@@ -35,6 +36,8 @@ interface Props {
   paymentOptions: PaymentOption[];
   lang: string | null;
   contentLang: string;
+  // Pickup time remembered from checkout, when this device placed the order as a scheduled one.
+  scheduledFor: string | null;
   onNewOrder: () => void;
 }
 
@@ -48,7 +51,7 @@ const paymentText = (order: OrderDetail) => {
   );
 };
 
-export default function OrderView({ orderId, settings, paymentOptions, lang, contentLang, onNewOrder }: Props) {
+export default function OrderView({ orderId, settings, paymentOptions, lang, contentLang, scheduledFor, onNewOrder }: Props) {
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -176,6 +179,9 @@ export default function OrderView({ orderId, settings, paymentOptions, lang, con
   const useCash = order.priceType === 'CASH_PRICE';
   const number = order.orderSerialNumber ?? order.shortId ?? '';
   const awaitingPayment = order.checkoutType === 'PAY_ONLINE' && order.orderStatusLabel === 'UNPAID' && !cancelled;
+  // The order itself only says that it is scheduled; the chosen time is what this device remembered at checkout.
+  const scheduled = order.lifecycleStatus === 'SCHEDULED' || !!scheduledFor;
+  const pickupAt = scheduledFor ? describeTime(scheduledFor, settings?.preferredTimezone) : '';
   // The order's own transaction list is the record of payment attempts; the newest one decides what is offered.
   const lastPayment = [...(order.transaction ?? [])].sort((a, b) => b.createDatetime - a.createDatetime)[0] ?? null;
   const paymentInFlight =
@@ -186,7 +192,9 @@ export default function OrderView({ orderId, settings, paymentOptions, lang, con
       ? { title: 'Confirming your payment.', detail: 'This usually takes a few seconds. There is no need to pay again.' }
       : awaitingPayment
         ? { title: 'One step left: payment.', detail: 'Your order is saved, but the kitchen will not start until it is paid.' }
-        : (HEADLINES[status] ?? FALLBACK_HEADLINE);
+        : scheduled && status === 'NEW'
+          ? { title: 'You’re booked in.', detail: pickupAt ? `We’ll have it ready for ${pickupAt}.` : 'We’ll have it ready for your pickup time.' }
+          : (HEADLINES[status] ?? FALLBACK_HEADLINE);
   const showBoth =
     order.checkoutType === 'PAY_IN_STORE' &&
     order.orderStatusLabel === 'UNPAID' &&
@@ -305,6 +313,12 @@ export default function OrderView({ orderId, settings, paymentOptions, lang, con
               <dd dir="auto">{order.pickupName}</dd>
             </div>
           ) : null}
+          {scheduled ? (
+            <div>
+              <dt>Pickup time</dt>
+              <dd>{pickupAt || 'Scheduled'}</dd>
+            </div>
+          ) : null}
           <div>
             <dt>Payment</dt>
             <dd>{paymentText(order)}</dd>
@@ -367,7 +381,7 @@ export default function OrderView({ orderId, settings, paymentOptions, lang, con
               </span>
             </p>
           ) : null}
-          {settings?.defaultPrepTimeMinutes && (status === 'NEW' || status === 'PREPARING') && !awaitingPayment && !cancelled ? (
+          {settings?.defaultPrepTimeMinutes && (status === 'NEW' || status === 'PREPARING') && !awaitingPayment && !cancelled && !scheduled ? (
             <p>
               <ClockIcon width={18} height={18} />
               <span>Orders usually take about {settings.defaultPrepTimeMinutes} minutes.</span>

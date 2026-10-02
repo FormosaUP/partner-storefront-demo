@@ -28,7 +28,9 @@ export function prefetchResource<T>(key: string, loader: (signal?: AbortSignal) 
 
 // Loads once per key. Retries on its own after a rate limit or a network failure.
 // With `cached`, a key seen before is served from memory at once and refreshed in the background.
-export function useResource<T>(key: string | null, loader: (signal: AbortSignal) => Promise<T>, cached = false): Resource<T> {
+// With `keepPrefix`, data from the previous key stays on screen while a new key with the same prefix loads
+// (the same menu asked for at a different pickup time), instead of dropping back to a skeleton.
+export function useResource<T>(key: string | null, loader: (signal: AbortSignal) => Promise<T>, cached = false, keepPrefix?: string): Resource<T> {
   const [state, setState] = useState<{ key: string | null; data: T | null; error: ApiError | null; loading: boolean }>({
     key: null,
     data: null,
@@ -76,7 +78,9 @@ export function useResource<T>(key: string | null, loader: (signal: AbortSignal)
 
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
   const fresh = state.key === key;
-  const data = fresh ? state.data : key !== null && cached ? ((resourceCache.get(key) as T | undefined) ?? null) : null;
+  const fromCache = key !== null && cached ? ((resourceCache.get(key) as T | undefined) ?? null) : null;
+  const carried = key !== null && keepPrefix && state.key?.startsWith(keepPrefix) ? state.data : null;
+  const data = fresh ? state.data : (fromCache ?? carried);
   return {
     data,
     error: fresh ? state.error : null,
@@ -98,12 +102,12 @@ export interface QuoteState {
 }
 
 // Re-prices the cart shortly after it stops changing.
-export function useQuote(lines: CartLine[], paymentOption: PaymentOption | null, lang: string | null): QuoteState {
+export function useQuote(lines: CartLine[], paymentOption: PaymentOption | null, lang: string | null, scheduledTime: string | null): QuoteState {
   const [held, setHeld] = useState<{ key: string; quote: Quote } | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const key = lines.length && paymentOption ? `${JSON.stringify(toPreviewProducts(lines))}|${paymentOption}|${lang}` : null;
+  const key = lines.length && paymentOption ? `${JSON.stringify(toPreviewProducts(lines))}|${paymentOption}|${lang}|${scheduledTime}` : null;
 
   useEffect(() => {
     if (key === null || !paymentOption) {
@@ -119,7 +123,11 @@ export function useQuote(lines: CartLine[], paymentOption: PaymentOption | null,
     setError(null);
     const timer = setTimeout(() => {
       api
-        .preview({ products: toPreviewProducts(lines), orderType: 'PICK_UP', paymentOption }, lang, controller.signal)
+        .preview(
+          { products: toPreviewProducts(lines), orderType: 'PICK_UP', paymentOption, ...(scheduledTime ? { scheduledTime } : {}) },
+          lang,
+          controller.signal,
+        )
         .then((quote) => {
           if (cancelled) return;
           setHeld({ key, quote });

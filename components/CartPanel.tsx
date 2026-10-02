@@ -3,9 +3,11 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { api, isApiError, isSafePaymentUrl, type ApiError } from '@/lib/api';
 import { blockText, formatMoney } from '@/lib/format';
+import { describeTime } from '@/lib/schedule';
 import { useRateLimitSeconds, type QuoteState } from '@/lib/hooks';
 import { cart, prefs, toPreviewProducts, type CartLine } from '@/lib/store';
 import type { PaymentOption, PaymentStart, PriceType, Quote, StoreSettings } from '@/lib/types';
+import PickupTime, { type ScheduleProps } from './PickupTime';
 import { ArrowIcon, BackIcon, BagIcon, CloseIcon, Photo, Stepper } from './ui';
 
 const PAYMENT_LABELS: Record<string, { title: string; detail: string }> = {
@@ -27,6 +29,7 @@ interface Props {
   paymentOption: PaymentOption | null;
   onPaymentOption: (option: PaymentOption) => void;
   unconfirmedAt: number | null;
+  schedule: ScheduleProps;
   lang: string | null;
   contentLang: string;
   titleId: string;
@@ -62,6 +65,7 @@ function lineProblems(quote: Quote | null, lines: CartLine[]) {
 export default function CartPanel(props: Props) {
   const { lines, quoteState, settings, paymentOptions, paymentOption, lang, contentLang, titleId, onClose, onBusy } = props;
   const { quote, current, error: quoteError, loading: quoting } = quoteState;
+  const { schedule } = props;
   const formId = useId();
   const [step, setStep] = useState<'cart' | 'checkout'>('cart');
   const [name, setName] = useState('');
@@ -92,6 +96,9 @@ export default function CartPanel(props: Props) {
     if (q.fulfillmentBlock) {
       // A rejected payment option is settled on the checkout step, where the other options are offered.
       if (q.fulfillmentBlock === 'PAYMENT_OPTION' && forStep === 'cart' && paymentOptions.length > 1) return null;
+      // Closed for orders right now, but a later time can still be booked.
+      if (q.fulfillmentBlock === 'CLOSED_HOURS' && !schedule.value && schedule.days.length)
+        return 'We are closed right now. Choose a later pickup time above to order ahead.';
       return blockText(q.fulfillmentBlock);
     }
     if (q.scheduleBlock) return blockText(q.scheduleBlock);
@@ -174,6 +181,7 @@ export default function CartPanel(props: Props) {
           orderType: 'PICK_UP',
           paymentOption,
           pickupName: cleanName,
+          ...(schedule.value ? { scheduledTime: schedule.value } : {}),
           pickupPhone: cleanPhone,
           ...(orderNote.trim() ? { note: orderNote.trim() } : {}),
         },
@@ -209,7 +217,7 @@ export default function CartPanel(props: Props) {
       }
 
       prefs.setUnconfirmed(null);
-      prefs.rememberOrder({ orderId: created.orderId, serial: created.orderSerialNumber });
+      prefs.rememberOrder({ orderId: created.orderId, serial: created.orderSerialNumber, scheduledFor: schedule.value });
 
       let payment: PaymentStart | null = null;
       if (paymentOption === 'PAY_ONLINE') {
@@ -222,10 +230,16 @@ export default function CartPanel(props: Props) {
       }
 
       cart.clear();
+      prefs.setPickupTime(null);
       // Show the order page first, so Back from the payment page lands on the order rather than an empty cart.
       props.onPlaced(created.orderId);
       if (payment && isSafePaymentUrl(payment.paymentLinkUrl)) {
-        prefs.rememberOrder({ orderId: created.orderId, serial: created.orderSerialNumber, transactionId: payment.transactionId });
+        prefs.rememberOrder({
+          orderId: created.orderId,
+          serial: created.orderSerialNumber,
+          transactionId: payment.transactionId,
+          scheduledFor: schedule.value,
+        });
         window.location.assign(payment.paymentLinkUrl);
       }
     } catch (err) {
@@ -342,6 +356,10 @@ export default function CartPanel(props: Props) {
 
   const totals = (
     <div className={`totals ${quoting ? 'is-updating' : ''}`} aria-busy={quoting}>
+      <p className="totals__pickup">
+        <span>Pickup</span>
+        <strong>{schedule.value ? describeTime(schedule.value, schedule.timezone) : 'As soon as possible'}</strong>
+      </p>
       {quote ? (
         <dl>
           <div>
@@ -424,6 +442,7 @@ export default function CartPanel(props: Props) {
       {step === 'cart' ? (
         <>
           <div className="cart__scroll">
+            <PickupTime {...schedule} />
             <ul className="lines" lang={contentLang}>
               {lines.map((line, i) => {
                 const priced = pricedLines?.[i]?.productId === line.productId ? pricedLines[i] : null;

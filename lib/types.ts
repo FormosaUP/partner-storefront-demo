@@ -33,6 +33,9 @@ export interface StoreSettings {
   orderTypeOptions: OrderType[] | null;
   minOrderAmount: number | null;
   asapAvailable: boolean;
+  allowFutureOrders: boolean;
+  schedulableWindows: { start: string; end: string }[] | null;
+  preferredTimezone: string | null;
   onlinePaymentOptions: PaymentOption[] | null;
   onlineFunctionEnabled: boolean;
   subdomain: string | null;
@@ -116,6 +119,8 @@ export interface PreviewRequest {
   products: PreviewRequestProduct[];
   orderType: OrderType;
   paymentOption: PaymentOption;
+  // Store-local wall-clock time without an offset. Left out for "as soon as possible".
+  scheduledTime?: string;
   note?: string;
   pickupName?: string;
   pickupPhone?: string;

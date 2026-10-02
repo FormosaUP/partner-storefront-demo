@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { isUuid } from './api';
+import { isWallClock } from './schedule';
 import type { PreviewRequest } from './types';
 
 export interface CartModifier {
@@ -25,6 +26,8 @@ export interface RecentOrder {
   orderId: string;
   serial: string | null;
   transactionId?: string | null;
+  // The pickup time chosen for a scheduled order, as the store-local wall-clock string.
+  scheduledFor?: string | null;
 }
 
 interface Persisted {
@@ -34,11 +37,13 @@ interface Persisted {
   recent: RecentOrder[];
   // Set when an order was sent but no answer came back, so the warning survives a reload.
   unconfirmedAt: number | null;
+  // Chosen pickup time (store-local wall clock), or null for as soon as possible.
+  pickupTime: string | null;
 }
 
 const KEY = 'storefront.v1';
 const MAX_QUANTITY = 99;
-const empty: Persisted = { lines: [], lang: null, menuId: null, recent: [], unconfirmedAt: null };
+const empty: Persisted = { lines: [], lang: null, menuId: null, recent: [], unconfirmedAt: null, pickupTime: null };
 
 let state: Persisted = empty;
 const listeners = new Set<() => void>();
@@ -77,10 +82,12 @@ function parse(raw: string | null): Persisted {
               orderId: r.orderId,
               serial: typeof r.serial === 'string' ? r.serial : null,
               transactionId: isUuid(r.transactionId) ? r.transactionId : null,
+              scheduledFor: isWallClock(r.scheduledFor) ? r.scheduledFor : null,
             }))
             .slice(0, 5)
         : [],
       unconfirmedAt: typeof p.unconfirmedAt === 'number' ? p.unconfirmedAt : null,
+      pickupTime: isWallClock(p.pickupTime) ? p.pickupTime : null,
     };
   } catch {
     return empty;
@@ -170,6 +177,7 @@ export const prefs = {
   setLang: (lang: string | null) => set({ lang }),
   setMenu: (menuId: string) => set({ menuId }),
   setUnconfirmed: (at: number | null) => set({ unconfirmedAt: at }),
+  setPickupTime: (pickupTime: string | null) => set({ pickupTime }),
   rememberOrder(order: RecentOrder) {
     set({ recent: [order, ...state.recent.filter((r) => r.orderId !== order.orderId)].slice(0, 5) });
   },

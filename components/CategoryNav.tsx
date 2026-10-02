@@ -34,12 +34,18 @@ export function CategoryLinks({ variant, categories, onJump }: Props) {
   const active = useSyncExternalStore(subscribe, activeCategory.get, () => null);
   const activeRef = useRef<HTMLButtonElement>(null);
 
-  // Keep the current chip centred in its scrolling row.
+  // Keep the current link in view inside its own scroller (the chip row, or the desktop rail), without moving the page.
   useEffect(() => {
-    if (variant !== 'chips') return;
-    const chip = activeRef.current;
-    const row = chip?.closest<HTMLElement>('.chips');
-    if (chip && row) row.scrollTo({ left: chip.offsetLeft - row.clientWidth / 2 + chip.clientWidth / 2, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+    const link = activeRef.current;
+    const behavior = prefersReducedMotion() ? 'auto' : 'smooth';
+    if (variant === 'chips') {
+      const row = link?.closest<HTMLElement>('.chips');
+      if (link && row) row.scrollTo({ left: link.offsetLeft - row.clientWidth / 2 + link.clientWidth / 2, behavior });
+    } else {
+      const rail = link?.closest<HTMLElement>('.rail');
+      if (link && rail && rail.scrollHeight > rail.clientHeight)
+        rail.scrollTo({ top: link.offsetTop - rail.clientHeight / 2 + link.clientHeight / 2, behavior });
+    }
   }, [active, variant]);
 
   return categories.map((c) => (
